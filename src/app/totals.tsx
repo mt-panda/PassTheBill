@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { Alert, Button, ScrollView } from 'react-native';
+import { Alert, ScrollView, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Card, Row, styles } from '@/components/ui';
-import { money, useSession, ymd } from '@/lib/session';
+import { Avatar, Badge, Button, Card, EmptyState, Icon, IconButton, Row, styles } from '@/components/ui';
+import { useTheme } from '@/hooks/use-theme';
+import { money, niceDate, useSession, ymd } from '@/lib/session';
 import { supabase, useLive } from '@/lib/supabase';
 
 type Total = {
@@ -17,6 +18,7 @@ type Total = {
 
 export default function TotalsScreen() {
   const member = useSession().member!;
+  const theme = useTheme();
   const [cursor, setCursor] = useState(() => new Date(new Date().getFullYear(), new Date().getMonth(), 1));
   const [totals, setTotals] = useState<Total[]>([]);
   const [openOrders, setOpenOrders] = useState(0);
@@ -55,51 +57,82 @@ export default function TotalsScreen() {
 
   const shift = (by: number) => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + by, 1));
   const label = cursor.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+  const teamTotal = totals.reduce((s, t) => s + t.grand_total, 0);
+  const paid = totals.filter((t) => t.settled_at).length;
 
   return (
-    <ScrollView contentContainerStyle={styles.screen}>
+    <ScrollView contentContainerStyle={styles.screen} contentInsetAdjustmentBehavior="automatic">
       <Row>
-        <Button title="‹ Prev" onPress={() => shift(-1)} />
-        <ThemedText type="smallBold">{label}</ThemedText>
-        <Button title="Next ›" onPress={() => shift(1)} />
+        <IconButton icon="back" label="Previous month" onPress={() => shift(-1)} />
+        <ThemedText type="smallBold" style={{ fontSize: 17 }}>
+          {label}
+        </ThemedText>
+        <IconButton icon="forward" label="Next month" onPress={() => shift(1)} />
       </Row>
 
-      {openOrders > 0 && (
-        <ThemedText type="small" themeColor="textSecondary">
-          {openOrders} order(s) this month still open. Totals may change, and settling is disabled until they're closed.
-        </ThemedText>
-      )}
-      {totals.length === 0 && <ThemedText themeColor="textSecondary">Nothing ordered this month.</ThemedText>}
-
-      {totals.map((t) => (
-        <Card key={t.member_id}>
-          <Row>
-            <ThemedText type="smallBold">{t.member_name}</ThemedText>
-            <ThemedText type="smallBold">{money(t.grand_total)}</ThemedText>
-          </Row>
-          <ThemedText type="small" themeColor="textSecondary">
-            Items {money(t.items_total)} + delivery {money(t.delivery_total)}
-          </ThemedText>
-          <Row>
-            <ThemedText type="small" themeColor={t.settled_at ? 'textSecondary' : 'text'}>
-              {t.settled_at ? `Settled ${t.settled_at.slice(0, 10)}` : 'Not settled'}
+      {totals.length === 0 ? (
+        <EmptyState icon="money" title="Nothing this month" text="Orders placed in this month will add up here." />
+      ) : (
+        <>
+          <Card style={{ gap: 6 }}>
+            <ThemedText type="label" themeColor="textSecondary">
+              Team spent
             </ThemedText>
-            <Button
-              title={t.settled_at ? 'Undo' : 'Mark settled'}
-              disabled={busy || (!t.settled_at && openOrders > 0)}
-              onPress={() => toggle(t)}
-            />
-          </Row>
-        </Card>
-      ))}
+            <ThemedText type="title">{money(teamTotal)}</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              {paid} of {totals.length} {totals.length > 1 ? 'people have' : 'person has'} paid
+            </ThemedText>
+          </Card>
 
-      {totals.length > 0 && (
-        <Card>
-          <Row>
-            <ThemedText type="smallBold">Team total</ThemedText>
-            <ThemedText type="smallBold">{money(totals.reduce((s, t) => s + t.grand_total, 0))}</ThemedText>
-          </Row>
-        </Card>
+          {openOrders > 0 && (
+            <Card style={{ backgroundColor: theme.warningSoft, borderColor: theme.warningSoft, flexDirection: 'row' }}>
+              <Icon name="info" size={20} color="warning" />
+              <ThemedText type="small" themeColor="warning" style={{ flex: 1 }}>
+                {openOrders} order{openOrders > 1 ? 's are' : ' is'} still open, so these numbers may change. Close
+                {openOrders > 1 ? ' them' : ' it'} before marking anyone as paid.
+              </ThemedText>
+            </Card>
+          )}
+
+          <ThemedText type="label" themeColor="textSecondary" style={styles.section}>
+            Who owes what
+          </ThemedText>
+          {totals.map((t) => (
+            <Card key={t.member_id}>
+              <Row>
+                <Row style={{ flexShrink: 1 }}>
+                  <Avatar name={t.member_name} size={40} />
+                  <View style={{ flexShrink: 1, gap: 2 }}>
+                    <ThemedText type="smallBold" numberOfLines={1}>
+                      {t.member_id === member.id ? `${t.member_name} (you)` : t.member_name}
+                    </ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 13 }}>
+                      {money(t.items_total)} food + {money(t.delivery_total)} delivery
+                    </ThemedText>
+                  </View>
+                </Row>
+                <ThemedText type="smallBold" style={{ fontSize: 17, fontVariant: ['tabular-nums'] }}>
+                  {money(t.grand_total)}
+                </ThemedText>
+              </Row>
+              <Row>
+                {t.settled_at ? (
+                  <Badge tone="success" icon="check">{`Paid · ${niceDate(t.settled_at)}`}</Badge>
+                ) : (
+                  <Badge tone="warning">Not paid yet</Badge>
+                )}
+                <Button
+                  small
+                  title={t.settled_at ? 'Undo' : 'Mark as paid'}
+                  icon={t.settled_at ? undefined : 'check'}
+                  variant={t.settled_at ? 'ghost' : 'secondary'}
+                  disabled={busy || (!t.settled_at && openOrders > 0)}
+                  onPress={() => toggle(t)}
+                />
+              </Row>
+            </Card>
+          ))}
+        </>
       )}
     </ScrollView>
   );

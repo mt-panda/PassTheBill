@@ -1,10 +1,13 @@
-import { Link, Stack, router } from 'expo-router';
+import { Link, router } from 'expo-router';
 import { useState } from 'react';
-import { Alert, Button, FlatList, Pressable, Share } from 'react-native';
+import { Alert, FlatList, Pressable, Share, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { Card, Row, styles } from '@/components/ui';
-import { money, useSession } from '@/lib/session';
+import { Avatar, Badge, Button, Card, EmptyState, Icon, Row, styles } from '@/components/ui';
+import { Fonts } from '@/constants/theme';
+import { useTheme } from '@/hooks/use-theme';
+import { money, niceDate, useSession } from '@/lib/session';
 import { supabase, useLive } from '@/lib/supabase';
 
 type OrderRow = {
@@ -18,6 +21,8 @@ type OrderRow = {
 
 export default function OrdersScreen() {
   const { member } = useSession();
+  const theme = useTheme();
+  const insets = useSafeAreaInsets();
   const [orders, setOrders] = useState<OrderRow[]>([]);
 
   useLive('orders,order_items,claims', async () => {
@@ -33,67 +38,150 @@ export default function OrdersScreen() {
   });
 
   const team = member!.teams;
+  const share = () => Share.share({ message: `Join "${team.name}" on PassTheBill with code ${team.code}` });
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          title: team.name,
-          headerRight: () => <Button title="Totals" onPress={() => router.push('/totals')} />,
-        }}
-      />
       <FlatList
         data={orders}
         keyExtractor={(o) => o.id}
-        contentContainerStyle={styles.screen}
+        contentContainerStyle={[styles.screen, { paddingTop: insets.top + 16, paddingBottom: 120 + insets.bottom }]}
         ListHeaderComponent={
-          <Row>
-            <Pressable
-              onPress={() =>
-                Share.share({ message: `Join "${team.name}" on Pass The Bill with code ${team.code}` })
-              }>
+          <View style={{ gap: 16 }}>
+            <Row style={{ alignItems: 'flex-start', marginBottom: 4 }}>
+              <View style={{ flexShrink: 1, gap: 4 }}>
+                <ThemedText type="small" themeColor="textSecondary">
+                  Hi {member!.name.split(' ')[0]}
+                </ThemedText>
+                <ThemedText type="subtitle" numberOfLines={1}>
+                  {team.name}
+                </ThemedText>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Settings"
+                hitSlop={8}
+                style={({ pressed }) => pressed && { opacity: 0.7 }}
+                onPress={() => router.push('/settings')}>
+                <Avatar name={member!.name} size={44} />
+              </Pressable>
+            </Row>
+            <Card>
+              <Row>
+                <View style={{ gap: 4, flexShrink: 1 }}>
+                  <ThemedText type="label" themeColor="textSecondary">
+                    Invite your team
+                  </ThemedText>
+                  <ThemedText
+                    selectable
+                    style={{ fontFamily: Fonts.mono, fontSize: 24, lineHeight: 30, fontWeight: '700', letterSpacing: 3 }}>
+                    {team.code}
+                  </ThemedText>
+                </View>
+                <Button title="Share" icon="share" variant="secondary" small onPress={share} />
+              </Row>
               <ThemedText type="small" themeColor="textSecondary">
-                Team code <ThemedText type="code">{team.code}</ThemedText> · tap to share
+                Teammates enter this code to join and claim their food.
               </ThemedText>
-            </Pressable>
-            <Button title="New order" onPress={() => router.push('/order-form')} />
-          </Row>
+            </Card>
+            {orders.length > 0 && (
+              <Row style={styles.section}>
+                <ThemedText type="label" themeColor="textSecondary">
+                  Orders
+                </ThemedText>
+                <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 13 }}>
+                  Tap one to claim your food
+                </ThemedText>
+              </Row>
+            )}
+          </View>
         }
-        ListEmptyComponent={<ThemedText themeColor="textSecondary">No orders yet.</ThemedText>}
+        ListEmptyComponent={
+          <EmptyState
+            icon="food"
+            title="No orders yet"
+            text="Tap “New order” below to add what was ordered. Your team can then claim their items."
+          />
+        }
         renderItem={({ item: o }) => {
           const units = o.order_items.flatMap((i) => i.claims);
           const qty = o.order_items.reduce((s, i) => s + i.qty, 0);
           const claimed = units.reduce((s, c) => s + c.units, 0);
           const mine = units.filter((c) => c.member_id === member!.id).reduce((s, c) => s + c.units, 0);
           const total = o.order_items.reduce((s, i) => s + i.qty * i.unit_price, 0) + o.delivery_charge;
-          const status =
-            o.status === 'closed'
-              ? 'Closed'
-              : qty > claimed
-                ? `${qty - claimed} unclaimed${mine ? '' : ' · tap to claim'}`
-                : 'All claimed · ready to close';
+          const badge =
+            o.status === 'closed' ? (
+              <Badge icon="lock">Closed</Badge>
+            ) : qty > claimed ? (
+              <Badge tone="warning">{`${qty - claimed} left to claim`}</Badge>
+            ) : (
+              <Badge tone="success" icon="check">
+                Ready to close
+              </Badge>
+            );
           return (
             <Link href={{ pathname: '/order/[id]', params: { id: o.id } }} asChild>
-              <Pressable>
-                <Card>
-                  <Row>
-                    <ThemedText type="smallBold">{o.title || 'Lunch'}</ThemedText>
-                    <ThemedText type="smallBold">{money(total)}</ThemedText>
-                  </Row>
-                  <Row>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {o.ordered_on}
-                    </ThemedText>
-                    <ThemedText type="small" themeColor={o.status === 'open' ? 'text' : 'textSecondary'}>
-                      {status}
-                    </ThemedText>
-                  </Row>
+              <Pressable style={({ pressed }) => pressed && { opacity: 0.7 }}>
+                <Card style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <View
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 14,
+                      backgroundColor: theme.backgroundSelected,
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}>
+                    <Icon name="food" size={20} />
+                  </View>
+                  <View style={{ flex: 1, gap: 6 }}>
+                    <Row>
+                      <ThemedText type="smallBold" numberOfLines={1} style={{ flexShrink: 1 }}>
+                        {o.title || 'Lunch'}
+                      </ThemedText>
+                      <ThemedText type="smallBold" style={{ fontVariant: ['tabular-nums'] }}>
+                        {money(total)}
+                      </ThemedText>
+                    </Row>
+                    <Row>
+                      <ThemedText type="small" themeColor="textSecondary">
+                        {niceDate(o.ordered_on)}
+                        {mine > 0 && ` · You claimed ${mine}`}
+                      </ThemedText>
+                      {badge}
+                    </Row>
+                  </View>
+                  <Icon name="forward" size={14} color="textSecondary" />
                 </Card>
               </Pressable>
             </Link>
           );
         }}
       />
+      <View
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: 0,
+          paddingHorizontal: 20,
+          paddingTop: 12,
+          paddingBottom: insets.bottom + 12,
+          backgroundColor: theme.background,
+          borderTopWidth: 1,
+          borderTopColor: theme.border,
+        }}>
+        <Row style={{ width: '100%', maxWidth: 760, alignSelf: 'center' }}>
+          <Button
+            title="Monthly totals"
+            icon="chart"
+            variant="secondary"
+            onPress={() => router.push('/totals')}
+            style={{ flex: 1, paddingHorizontal: 12 }}
+          />
+          <Button title="New order" icon="add" onPress={() => router.push('/order-form')} style={{ flex: 1 }} />
+        </Row>
+      </View>
     </>
   );
 }

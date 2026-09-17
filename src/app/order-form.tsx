@@ -1,10 +1,10 @@
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, Button, ScrollView } from 'react-native';
+import { Alert, ScrollView } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Card, Input, Row, styles } from '@/components/ui';
-import { CURRENCY, useSession, ymd } from '@/lib/session';
+import { Button, Card, Divider, IconButton, Input, Row, styles } from '@/components/ui';
+import { CURRENCY, money, useSession, ymd } from '@/lib/session';
 import { supabase } from '@/lib/supabase';
 
 type Draft = { key: string; id?: string; name: string; price: string; qty: string };
@@ -108,49 +108,98 @@ export default function OrderFormScreen() {
     }
   }
 
+  // Live preview only; invalid numbers count as 0 until save() validates them.
+  const lineTotal = (r: Draft) => (Number(r.price) || 0) * (Number(r.qty) || 0);
+  const itemsTotal = items.reduce((s, r) => s + lineTotal(r), 0);
+  const deliveryTotal = Number(delivery) || 0;
+
   return (
     <>
       <Stack.Screen options={{ title: id ? 'Edit order' : 'New order' }} />
-      <ScrollView contentContainerStyle={styles.screen} keyboardShouldPersistTaps="handled">
-        <Input placeholder="Title (optional), e.g. KFC" value={title} onChangeText={setTitle} />
-        <Row>
-          <Input style={{ flex: 1 }} placeholder="YYYY-MM-DD" value={date} onChangeText={setDate} />
-          <Input
-            style={{ flex: 1 }}
-            placeholder={`Delivery (${CURRENCY})`}
-            value={delivery}
-            onChangeText={setDelivery}
-            keyboardType="decimal-pad"
-          />
-        </Row>
+      <ScrollView
+        contentContainerStyle={styles.screen}
+        contentInsetAdjustmentBehavior="automatic"
+        keyboardShouldPersistTaps="handled">
+        <ThemedText type="label" themeColor="textSecondary" style={styles.section}>
+          Order details
+        </ThemedText>
+        <Card>
+          <Input label="Where from?" placeholder="e.g. KFC (optional)" value={title} onChangeText={setTitle} />
+          <Row style={{ alignItems: 'flex-start' }}>
+            <Input style={{ flex: 1 }} label="Date" placeholder="YYYY-MM-DD" value={date} onChangeText={setDate} />
+            <Input
+              style={{ flex: 1 }}
+              label={`Delivery fee (${CURRENCY})`}
+              placeholder="0"
+              value={delivery}
+              onChangeText={setDelivery}
+              keyboardType="decimal-pad"
+            />
+          </Row>
+          <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 13 }}>
+            The delivery fee is split evenly between everyone who claims an item.
+          </ThemedText>
+        </Card>
 
-        <ThemedText type="smallBold">Items</ThemedText>
-        {items.map((r) => (
+        <ThemedText type="label" themeColor="textSecondary" style={styles.section}>
+          What was ordered
+        </ThemedText>
+        {items.map((r, i) => (
           <Card key={r.key}>
             <Row>
-              <Input style={{ flex: 1 }} placeholder="Item name" value={r.name} onChangeText={(name) => update(r.key, { name })} />
-              <Button title="✕" onPress={() => setItems((rows) => rows.filter((x) => x.key !== r.key))} />
+              <ThemedText type="smallBold">Item {i + 1}</ThemedText>
+              <IconButton
+                icon="close"
+                label={`Remove item ${i + 1}`}
+                onPress={() => setItems((rows) => rows.filter((x) => x.key !== r.key))}
+              />
             </Row>
-            <Row>
+            <Input placeholder="e.g. Zinger burger" value={r.name} onChangeText={(name) => update(r.key, { name })} />
+            <Row style={{ alignItems: 'flex-start' }}>
               <Input
                 style={{ flex: 2 }}
-                placeholder={`Price each (${CURRENCY})`}
+                label={`Price each (${CURRENCY})`}
+                placeholder="0"
                 value={r.price}
                 onChangeText={(price) => update(r.key, { price })}
                 keyboardType="decimal-pad"
               />
               <Input
                 style={{ flex: 1 }}
-                placeholder="Qty"
+                label="How many"
+                placeholder="1"
                 value={r.qty}
                 onChangeText={(qty) => update(r.key, { qty })}
                 keyboardType="number-pad"
               />
             </Row>
+            {lineTotal(r) > 0 && (
+              <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'right' }}>
+                {money(lineTotal(r))}
+              </ThemedText>
+            )}
           </Card>
         ))}
-        <Button title="+ Add item" onPress={() => setItems((rows) => [...rows, blank()])} />
-        <Button title={busy ? 'Saving…' : 'Save order'} disabled={busy} onPress={save} />
+        <Button title="Add another item" icon="add" variant="secondary" onPress={() => setItems((rows) => [...rows, blank()])} />
+
+        <Card style={{ marginTop: 8 }}>
+          <Row>
+            <ThemedText type="small" themeColor="textSecondary">Items</ThemedText>
+            <ThemedText type="small">{money(itemsTotal)}</ThemedText>
+          </Row>
+          <Row>
+            <ThemedText type="small" themeColor="textSecondary">Delivery</ThemedText>
+            <ThemedText type="small">{money(deliveryTotal)}</ThemedText>
+          </Row>
+          <Divider />
+          <Row>
+            <ThemedText type="smallBold">Total bill</ThemedText>
+            <ThemedText type="subtitle" style={{ fontSize: 22, fontVariant: ['tabular-nums'] }}>
+              {money(itemsTotal + deliveryTotal)}
+            </ThemedText>
+          </Row>
+        </Card>
+        <Button title={busy ? 'Saving…' : id ? 'Save changes' : 'Create order'} icon="check" disabled={busy} onPress={save} />
       </ScrollView>
     </>
   );

@@ -4,7 +4,7 @@ import { Fonts, ThemeColor } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 export type ThemedTextProps = TextProps & {
-  type?: 'default' | 'title' | 'small' | 'smallBold' | 'subtitle' | 'link' | 'linkPrimary' | 'code';
+  type?: 'default' | 'title' | 'small' | 'smallBold' | 'subtitle' | 'label' | 'link' | 'linkPrimary' | 'code';
   themeColor?: ThemeColor;
 };
 
@@ -20,6 +20,7 @@ export function ThemedText({ style, type = 'default', themeColor, ...rest }: The
         type === 'small' && styles.small,
         type === 'smallBold' && styles.smallBold,
         type === 'subtitle' && styles.subtitle,
+        type === 'label' && styles.label,
         type === 'link' && styles.link,
         type === 'linkPrimary' && styles.linkPrimary,
         type === 'code' && styles.code,
@@ -34,27 +35,38 @@ const styles = StyleSheet.create({
   small: {
     fontSize: 14,
     lineHeight: 20,
-    fontWeight: 500,
+    fontWeight: 400,
   },
   smallBold: {
-    fontSize: 14,
+    fontSize: 15,
     lineHeight: 20,
-    fontWeight: 700,
+    fontWeight: 600,
+    letterSpacing: -0.2,
   },
   default: {
     fontSize: 16,
     lineHeight: 24,
-    fontWeight: 500,
+    fontWeight: 400,
   },
   title: {
-    fontSize: 48,
-    fontWeight: 600,
-    lineHeight: 52,
+    fontSize: 40,
+    lineHeight: 46,
+    fontWeight: 700,
+    letterSpacing: -1.2,
+    fontVariant: ['tabular-nums'],
   },
   subtitle: {
-    fontSize: 32,
-    lineHeight: 44,
+    fontSize: 26,
+    lineHeight: 32,
+    fontWeight: 700,
+    letterSpacing: -0.6,
+  },
+  label: {
+    fontSize: 12,
+    lineHeight: 16,
     fontWeight: 600,
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
   },
   link: {
     lineHeight: 30,
