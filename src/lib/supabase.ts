@@ -1,6 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
+import * as Linking from 'expo-linking';
 import { useFocusEffect } from 'expo-router';
+import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffectEvent } from 'react';
 
 export const supabase = createClient(
@@ -12,17 +14,48 @@ export const supabase = createClient(
       autoRefreshToken: true,
       persistSession: true,
       detectSessionInUrl: false,
+      flowType: 'pkce',
     },
   }
 );
 
-/** Existing session's user id, or signs in anonymously. */
-export async function currentUserId() {
-  const { data } = await supabase.auth.getSession();
-  if (data.session) return data.session.user.id;
-  const { data: anon, error } = await supabase.auth.signInAnonymously();
+/** Opens Google in an in-app browser sheet; resolves once signed in, or silently if the user closes the sheet. */
+export async function signInWithGoogle() {
+  const redirectTo = Linking.createURL('auth-callback');
+  // Must match Supabase → Authentication → URL Configuration → Redirect URLs, or Supabase falls back to Site URL.
+  if (__DEV__) console.log('Google sign-in redirect URL:', redirectTo);
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo, skipBrowserRedirect: true, queryParams: { prompt: 'select_account' } },
+  });
   if (error) throw error;
-  return anon.user!.id;
+
+  const result = await WebBrowser.openAuthSessionAsync(data.url, redirectTo);
+  if (result.type !== 'success') return;
+
+  const { queryParams } = Linking.parse(result.url);
+  if (queryParams?.error_description) throw new Error(String(queryParams.error_description));
+  if (!queryParams?.code) throw new Error('Google sign-in did not return a code. Check the redirect URLs in Supabase.');
+  await completeSignIn(String(queryParams.code));
+}
+
+const exchanges = new Map<string, Promise<void>>();
+
+/**
+ * Trades the OAuth code for a session. Both the browser sheet (iOS) and the auth-callback route (Android,
+ * where the OS hands the link to the router) may call this with the same code; a code is single-use, so
+ * the second caller just awaits the first exchange.
+ */
+export function completeSignIn(code: string) {
+  if (!exchanges.has(code)) {
+    exchanges.set(
+      code,
+      supabase.auth.exchangeCodeForSession(code).then(({ error }) => {
+        if (error) throw error;
+      })
+    );
+  }
+  return exchanges.get(code)!;
 }
 
 /** Runs `load` on focus, whenever any of `tables` changes, and whenever `key` changes. */
