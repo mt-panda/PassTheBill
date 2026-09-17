@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "RNAPP",
-    "slug": "RNAPP",
+    "name": "Pass The Bill",
+    "slug": "pass-the-bill",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "rnapp",
+    "scheme": "passthebill",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
@@ -20,7 +20,7 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "output": "static",
+      "output": "single",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
