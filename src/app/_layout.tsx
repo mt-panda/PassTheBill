@@ -18,8 +18,6 @@ SplashScreen.preventAutoHideAsync();
 const ONBOARDED = 'onboarded';
 const THEME = 'theme';
 
-// Native override: every useColorScheme(), native header, alert and system bar follows it.
-// react-native-web has no setColorScheme, so the Settings toggle is hidden on web.
 const applyTheme = (pref: ThemePref) => Appearance.setColorScheme?.(pref === 'system' ? 'unspecified' : pref);
 
 export default function RootLayout() {
@@ -66,7 +64,6 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     });
     const { data } = supabase.auth.onAuthStateChange((event) => {
-      // setTimeout: calling supabase inside this callback directly can deadlock (per Supabase docs).
       if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') setTimeout(reload, 0);
     });
     return () => data.subscription.unsubscribe();
@@ -74,13 +71,13 @@ export default function RootLayout() {
 
   function finishOnboarding() {
     setOnboarded(true);
-    AsyncStorage.setItem(ONBOARDED, '1').catch(() => {}); // worst case: onboarding shows once more
+    AsyncStorage.setItem(ONBOARDED, '1').catch(() => {});
   }
 
   function setThemePref(pref: ThemePref) {
     setThemePrefState(pref);
     applyTheme(pref);
-    AsyncStorage.setItem(THEME, pref).catch(() => {}); // worst case: resets to phone setting next launch
+    AsyncStorage.setItem(THEME, pref).catch(() => {});
   }
 
   return (
@@ -114,7 +111,6 @@ export default function RootLayout() {
             <Stack.Screen name="totals" options={{ title: 'Monthly totals', headerLargeTitleEnabled: true }} />
             <Stack.Screen name="settings" options={{ title: 'Settings' }} />
           </Stack.Protected>
-          {/* Unprotected and last: if it came first, a blocked "/" would fall back to it and loop. */}
           <Stack.Screen name="auth-callback" options={{ headerShown: false }} />
         </Stack>
         {splash && <AnimatedSplash ready={ready} onDone={() => setSplash(false)} />}

@@ -13,7 +13,6 @@ import Animated, {
 
 import { Brand } from '@/constants/theme';
 
-/** A receipt glyph drawn with plain views so it looks identical on every platform. */
 export function Receipt({ size, ink, paper }: { size: number; ink: string; paper: string }) {
   const u = size / 100;
   const line = (width: number) => (
@@ -37,7 +36,6 @@ export function Receipt({ size, ink, paper }: { size: number; ink: string; paper
   );
 }
 
-/** App icon: rounded tile with a receipt. */
 export function LogoMark({ size = 56, tile, ink }: { size?: number; tile: string; ink: string }) {
   return (
     <View
@@ -57,10 +55,6 @@ export function LogoMark({ size = 56, tile, ink }: { size?: number; tile: string
 const LOGO = 104;
 const out = Easing.out(Easing.cubic);
 
-/**
- * Plays after the native splash (same pine background, no image) hides:
- * the two halves of the logo slide together — the bill coming together — then the name rises in.
- */
 export function AnimatedSplash({ ready, onDone }: { ready: boolean; onDone: () => void }) {
   const halves = useSharedValue(0);
   const receipt = useSharedValue(0);
@@ -146,7 +140,6 @@ const s = StyleSheet.create({
     borderWidth: 2,
     borderColor: Brand.cream,
   },
-  // +1 so the halves overlap and no hairline seam shows once joined
   half: { position: 'absolute', top: 0, width: LOGO / 2 + 1, height: LOGO, backgroundColor: Brand.cream },
   left: { left: 0, borderTopLeftRadius: LOGO * 0.3, borderBottomLeftRadius: LOGO * 0.3 },
   right: { right: 0, borderTopRightRadius: LOGO * 0.3, borderBottomRightRadius: LOGO * 0.3 },

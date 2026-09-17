@@ -19,10 +19,8 @@ export const supabase = createClient(
   }
 );
 
-/** Opens Google in an in-app browser sheet; resolves once signed in, or silently if the user closes the sheet. */
 export async function signInWithGoogle() {
   const redirectTo = Linking.createURL('auth-callback');
-  // Must match Supabase → Authentication → URL Configuration → Redirect URLs, or Supabase falls back to Site URL.
   if (__DEV__) console.log('Google sign-in redirect URL:', redirectTo);
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
@@ -41,11 +39,6 @@ export async function signInWithGoogle() {
 
 const exchanges = new Map<string, Promise<void>>();
 
-/**
- * Trades the OAuth code for a session. Both the browser sheet (iOS) and the auth-callback route (Android,
- * where the OS hands the link to the router) may call this with the same code; a code is single-use, so
- * the second caller just awaits the first exchange.
- */
 export function completeSignIn(code: string) {
   if (!exchanges.has(code)) {
     exchanges.set(
@@ -58,7 +51,6 @@ export function completeSignIn(code: string) {
   return exchanges.get(code)!;
 }
 
-/** Runs `load` on focus, whenever any of `tables` changes, and whenever `key` changes. */
 export function useLive(tables: string, load: () => void, key = '') {
   const onChange = useEffectEvent(load);
 

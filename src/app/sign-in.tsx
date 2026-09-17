@@ -16,7 +16,7 @@ export default function SignInScreen() {
   async function signIn() {
     setBusy(true);
     try {
-      await signInWithGoogle(); // root layout hears SIGNED_IN and moves on
+      await signInWithGoogle();
     } catch (e) {
       Alert.alert('Could not sign in', (e as Error).message);
     } finally {

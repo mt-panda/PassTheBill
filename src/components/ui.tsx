@@ -245,7 +245,6 @@ export function Segmented<T extends string>({ options, value, onChange }: Segmen
   );
 }
 
-/** Hairline divider for lists inside a card. */
 export function Divider() {
   const theme = useTheme();
   return <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: theme.border }} />;

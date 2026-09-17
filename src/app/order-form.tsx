@@ -81,8 +81,6 @@ export default function OrderFormScreen() {
         return;
       }
 
-      // ponytail: edit is several requests, not one transaction. A failure midway leaves a partial edit
-      // the orderer can see and redo. Move to a save_order() RPC if that ever causes real confusion.
       const { data: updated, error } = await supabase.from('orders').update(order).eq('id', id).select('id');
       if (error) throw error;
       if (!updated.length) throw new Error('This order is closed and can no longer be edited.');
@@ -108,7 +106,6 @@ export default function OrderFormScreen() {
     }
   }
 
-  // Live preview only; invalid numbers count as 0 until save() validates them.
   const lineTotal = (r: Draft) => (Number(r.price) || 0) * (Number(r.qty) || 0);
   const itemsTotal = items.reduce((s, r) => s + lineTotal(r), 0);
   const deliveryTotal = Number(delivery) || 0;

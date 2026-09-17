@@ -26,7 +26,6 @@ export default function OrdersScreen() {
   const [orders, setOrders] = useState<OrderRow[]>([]);
 
   useLive('orders,order_items,claims', async () => {
-    // ponytail: last 100 orders only, add paging if anyone scrolls that far back
     const { data, error } = await supabase
       .from('orders')
       .select('id, title, ordered_on, status, delivery_charge, order_items(qty, unit_price, claims(units, member_id))')

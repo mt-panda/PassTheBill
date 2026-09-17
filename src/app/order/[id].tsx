@@ -26,7 +26,7 @@ export default function OrderScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const me = useSession().member!.id;
   const theme = useTheme();
-  const [order, setOrder] = useState<Order | null>(); // undefined = loading, null = gone
+  const [order, setOrder] = useState<Order | null>();
   const [shares, setShares] = useState<Share[]>([]);
   const [busy, setBusy] = useState(false);
 

@@ -1,6 +1,3 @@
-# Every push to master ships the JS bundle to installed apps via EAS Update.
-# Native changes (new native package, SDK upgrade, app.json native config) do NOT go out this way:
-# bump "version" in app.json and run `eas build` instead.
 name: EAS Update
 
 on:
@@ -28,7 +25,6 @@ jobs:
 
       - run: npm ci
 
-      # Commit message goes through env, never straight into the shell, so quotes/backticks in it can't run code.
       - run: eas update --channel production --environment production --message "$MESSAGE" --non-interactive
         env:
           MESSAGE: ${{ github.event.head_commit.message }}

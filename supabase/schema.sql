@@ -1,6 +1,3 @@
--- Lunch splitter schema. Paste into Supabase SQL editor and run once.
--- Requires: Authentication -> Sign In / Providers -> Allow anonymous sign-ins ENABLED.
-
 create table teams (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -44,13 +41,11 @@ create table claims (
 
 create table settlements (
   member_id uuid not null references members(id) on delete cascade,
-  month date not null, -- always the 1st of the month
+  month date not null,
   team_id uuid not null references teams(id) on delete cascade,
   settled_at timestamptz not null default now(),
   primary key (member_id, month)
 );
-
--- ---------- helpers & RPCs ----------
 
 create function my_team_id() returns uuid
 language sql stable security definer set search_path = public as $$
@@ -97,8 +92,6 @@ begin
   update orders set status = 'closed' where id = p_order_id;
 end $$;
 
--- ponytail: two people grabbing the last unit at the same instant can both pass this check.
--- Fine for a lunch group; add `perform 1 from order_items where id = new.item_id for update;` at the top if it ever bites.
 create function check_claim_units() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v_qty int; v_taken int;
@@ -114,7 +107,6 @@ end $$;
 create trigger claims_units before insert or update on claims
 for each row execute function check_claim_units();
 
--- Orderer lowering qty below what's already claimed would silently break totals.
 create function check_item_qty() returns trigger
 language plpgsql security definer set search_path = public as $$
 declare v_taken int;
@@ -128,9 +120,6 @@ end $$;
 
 create trigger items_qty before update on order_items
 for each row execute function check_item_qty();
-
--- ---------- RLS ----------
--- Subqueries on `orders` inside policies are themselves filtered by orders' RLS, so team scoping is inherited.
 
 alter table teams enable row level security;
 alter table members enable row level security;
@@ -149,7 +138,7 @@ create policy "create order" on orders for insert
   with check (team_id = my_team_id() and created_by = auth.uid() and status = 'open');
 create policy "creator edits open order" on orders for update
   using (created_by = auth.uid() and status = 'open')
-  with check (created_by = auth.uid() and status = 'open'); -- closing only via close_order()
+  with check (created_by = auth.uid() and status = 'open');
 create policy "creator deletes open order" on orders for delete
   using (created_by = auth.uid() and status = 'open');
 
@@ -169,10 +158,6 @@ create policy "own claims on open orders" on claims for all
 
 create policy "team settlements" on settlements for all
   using (team_id = my_team_id()) with check (team_id = my_team_id());
-
--- ---------- totals ----------
--- Delivery share = order's delivery charge / number of people who claimed anything in that order.
--- Unrounded on purpose; round only for display so shares always sum to the real charge.
 
 create view order_member_totals with (security_invoker = on) as
 select
@@ -204,5 +189,4 @@ join members m on m.id = t.member_id
 left join settlements s on s.member_id = t.member_id and s.month = date_trunc('month', t.ordered_on)::date
 group by t.team_id, t.member_id, m.name, date_trunc('month', t.ordered_on), s.settled_at;
 
--- ---------- realtime ----------
 alter publication supabase_realtime add table orders, order_items, claims, settlements;
