@@ -1,56 +1,241 @@
-# Welcome to your Expo app 👋
+# PassTheBill
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+**Split team lunch orders without the end-of-month guesswork.**
 
-## Get started
+One person enters the order. Everyone taps what they ate. The app splits the delivery fee, keeps a running tab per person, and shows who owes what at the end of the month.
 
-1. Install dependencies
+![Expo SDK 57](https://img.shields.io/badge/Expo_SDK-57-000020?logo=expo&logoColor=white)
+![React Native 0.86](https://img.shields.io/badge/React_Native-0.86-61DAFB?logo=react&logoColor=black)
+![Supabase](https://img.shields.io/badge/Supabase-Postgres-3FCF8E?logo=supabase&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)
 
-   ```bash
-   npm install
-   ```
+<table>
+  <tr>
+    <td align="center"><img src="docs/screenshots/orders.png" width="240" alt="Orders list" /><br /><sub><b>Team orders</b></sub></td>
+    <td align="center"><img src="docs/screenshots/order.png" width="240" alt="Claiming items on an order" /><br /><sub><b>Claim what you ate</b></sub></td>
+    <td align="center"><img src="docs/screenshots/totals.png" width="240" alt="Monthly totals" /><br /><sub><b>Monthly totals</b></sub></td>
+  </tr>
+  <tr>
+    <td align="center"><img src="docs/screenshots/order-form.png" width="240" alt="Order form" /><br /><sub><b>Add or edit an order</b></sub></td>
+    <td align="center"><img src="docs/screenshots/orders-dark.png" width="240" alt="Dark mode" /><br /><sub><b>Dark mode</b></sub></td>
+    <td align="center"><img src="docs/screenshots/sign-in.png" width="240" alt="Google sign-in" /><br /><sub><b>Google sign-in</b></sub></td>
+  </tr>
+</table>
 
-2. Start the app
+<sub>Screenshots show demo data.</sub>
 
-   ```bash
-   npx expo start
-   ```
+---
 
-In the output, you'll find options to open the app in a
+## Contents
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+- [Features](#features)
+- [How the money works](#how-the-money-works)
+- [Tech stack](#tech-stack)
+- [Project structure](#project-structure)
+- [Getting started](#getting-started)
+- [Push notifications](#push-notifications)
+- [Building and releasing](#building-and-releasing)
+- [Database](#database)
+- [Known limitations](#known-limitations)
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+## Features
 
-## Get a fresh project
+- **Google sign-in.** No passwords, and the same Google account always returns to the same person on any device.
+- **Teams by invite code.** Start a team and share its six-character code; teammates enter it to join.
+- **One order, many eaters.** The orderer enters each item with its price and quantity, plus the delivery fee.
+- **Claim by unit.** If three Zinger burgers were ordered, three people each tap **+** once. You can't claim more than was ordered.
+- **Live updates.** Claims and new orders show up on everyone's phone instantly.
+- **Push notifications.** Teammates get a notification when a new order is posted, even if the app is closed. Tapping it opens the order.
+- **Close to freeze.** An order can only be closed once every unit is claimed. After that, prices and claims are locked.
+- **Monthly totals.** See each person's food and delivery totals for any month, and mark people as paid.
+- **Light and dark themes.** Follows the phone's setting, or can be pinned in Settings.
+- **Over-the-air updates.** Pushing to `master` updates every installed copy of the app without a reinstall.
 
-When you're ready, run:
+## How the money works
 
-```bash
-npm run reset-project
+| Rule | Enforced by |
+|---|---|
+| Each person pays `units claimed × unit price` for their items | `order_member_totals` view |
+| Delivery is split equally among the people who claimed at least one item on that order | `order_member_totals` view |
+| Nobody can claim more units than were ordered | `claims_units` trigger |
+| The orderer can't lower a quantity below what's already claimed | `items_qty` trigger |
+| An order can only be closed when every unit is claimed | `close_order()` function |
+| Closed orders can't be edited, re-claimed or deleted | Row-level security |
+| Marking people as paid is disabled while the month still has open orders | App |
+
+Money rules live in Postgres, not in the app, so a bug or a modified client can't break them. Amounts are stored unrounded and only rounded for display, so shares always add up to the real bill.
+
+## Tech stack
+
+| Layer | Choice |
+|---|---|
+| App | [Expo](https://expo.dev) SDK 57, React Native 0.86, React 19, TypeScript |
+| Navigation | [Expo Router](https://docs.expo.dev/router/introduction/) with `Stack.Protected` route guards |
+| Backend | [Supabase](https://supabase.com): Postgres, row-level security, Realtime, Auth |
+| Auth | Google OAuth via Supabase (PKCE) in an in-app browser sheet |
+| Push | `expo-notifications` and the Expo Push Service (Firebase Cloud Messaging on Android), sent from Postgres with `pg_net` |
+| Builds and updates | EAS Build, EAS Update, GitHub Actions |
+
+## Project structure
+
+```
+src/
+├── app/                     # Screens (file-based routes)
+│   ├── _layout.tsx          # Session loading, route guards, theme, push setup
+│   ├── onboarding.tsx       # First-launch intro
+│   ├── sign-in.tsx          # "Continue with Google"
+│   ├── auth-callback.tsx    # Finishes Google sign-in when Android routes the redirect here
+│   ├── join.tsx             # Join a team by code, or create one
+│   ├── index.tsx            # Team orders
+│   ├── order/[id].tsx       # Order detail: claim items, split, close
+│   ├── order-form.tsx       # New / edit order
+│   ├── totals.tsx           # Monthly totals and settle-up
+│   └── settings.tsx         # Profile, theme, sign out
+├── components/              # UI kit (buttons, cards, inputs, badges), splash
+├── constants/theme.ts       # Colours, fonts, spacing
+├── hooks/                   # Colour scheme and theme hooks
+└── lib/
+    ├── supabase.ts          # Supabase client, Google sign-in, live-query hook
+    ├── session.ts           # Session context, money and date formatting
+    └── push.ts              # Push registration and tap-to-open (push.web.ts is a no-op)
+supabase/
+├── schema.sql               # Tables, RLS, triggers, RPCs, totals views
+├── check.sql                # Self-test for the money rules (rolls itself back)
+└── push.sql                 # Push token table and new-order notification trigger
+.github/workflows/
+└── eas-update.yml           # Publishes an OTA update on every push to master
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+## Getting started
 
-### Other setup steps
+### Prerequisites
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+- Node.js 20 or newer
+- A [Supabase](https://supabase.com) project
+- A [Google Cloud](https://console.cloud.google.com) project, for OAuth
+- An [Expo](https://expo.dev) account and the EAS CLI: `npm i -g eas-cli`
+- Android phone with **Expo Go** for development
 
-## Learn more
+### 1. Install
 
-To learn more about developing your project with Expo, look at the following resources:
+```bash
+git clone git@github.com:mt-panda/PassTheBill.git
+cd PassTheBill
+npm install
+```
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+### 2. Environment
 
-## Join the community
+Copy `.env.example` to `.env` and fill in the values from **Supabase → Project Settings → API**:
 
-Join our community of developers creating universal apps.
+```env
+EXPO_PUBLIC_SUPABASE_URL=https://<project-ref>.supabase.co
+EXPO_PUBLIC_SUPABASE_KEY=sb_publishable_...
+```
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+Use the **publishable** key, never the secret/service-role key. It ships inside the app, and row-level security is what protects the data.
+
+### 3. Database
+
+In the Supabase SQL editor, run these in order:
+
+1. [`supabase/schema.sql`](supabase/schema.sql): tables, security rules and totals.
+2. [`supabase/check.sql`](supabase/check.sql): should end with the notice `check passed`. It rolls back, leaving no data.
+3. [`supabase/push.sql`](supabase/push.sql): push notification tokens and the new-order trigger.
+
+### 4. Google sign-in
+
+1. **Google Cloud → Google Auth Platform**
+   - **Branding:** app name and support email.
+   - **Audience:** External, then **Publish app**. Until it's published, only listed test users can sign in.
+   - **Clients → Create client → Web application**, with this authorized redirect URI:
+     `https://<project-ref>.supabase.co/auth/v1/callback`
+2. **Supabase → Authentication → Sign In / Providers → Google:** enable it and paste the client ID and secret.
+3. **Supabase → Authentication → URL Configuration**
+   - **Site URL:** `passthebill://auth-callback`
+   - **Redirect URLs:** `passthebill://**` and `exp://**`
+
+### 5. Run
+
+```bash
+npx expo start --tunnel
+```
+
+Scan the QR code with Expo Go.
+
+> **Why `--tunnel`?** On Wi-Fi, Expo Go uses an address like `exp://192.168.x.x:8081`, and Supabase's `**` wildcard never matches IP-address hosts. Sign-in then falls back to the Site URL and never returns to the app. Tunnel mode uses an `*.exp.direct` hostname, which matches. If you're not testing sign-in, plain `npx expo start` is faster.
+
+## Push notifications
+
+Push doesn't work in Expo Go on Android. Use a build from EAS (see below).
+
+1. **Firebase console:** create a project and add an Android app with the package name `com.tahirrafiqg.passthebill`. Download `google-services.json` into the project root. It only contains public identifiers and is committed.
+2. **Project settings → Service accounts → Generate new private key.** Keep this file **outside** the repo; it's a secret.
+3. Upload that key to EAS:
+   ```bash
+   eas credentials
+   # Android → production → Google Service Account
+   # → Manage your Google Service Account Key for Push Notifications (FCM V1)
+   # → Set up … → Upload a new service account key
+   ```
+4. Run `supabase/push.sql` if you haven't already.
+
+When an order is inserted, Postgres calls the Expo Push API directly, so no Edge Function is needed. Every teammate except the orderer gets a notification. To debug deliveries:
+
+```sql
+select status_code, content, created from net._http_response order by created desc limit 10;
+```
+
+## Building and releasing
+
+### Store the Supabase keys in EAS
+
+`.env` is not committed, so builds and updates read the keys from EAS instead:
+
+```bash
+eas env:create --environment production --name EXPO_PUBLIC_SUPABASE_URL --value "https://<project-ref>.supabase.co" --visibility plaintext
+eas env:create --environment production --name EXPO_PUBLIC_SUPABASE_KEY --value "sb_publishable_..." --visibility plaintext
+```
+
+### Build an installable Android app
+
+```bash
+eas build --profile production --platform android
+```
+
+This produces an APK with a shareable install link.
+
+### Over-the-air updates
+
+Every push to `master` runs [`.github/workflows/eas-update.yml`](.github/workflows/eas-update.yml), which publishes the new JavaScript bundle to the `production` channel. Installed apps check on launch, wait up to 3 seconds for a new update, and otherwise apply it on the next launch.
+
+One-time setup: create an access token at **expo.dev → Account settings → Access tokens** and add it to the GitHub repo as the Actions secret `EXPO_TOKEN`.
+
+> **Native changes need a new build.** Adding a native package, upgrading the Expo SDK, or changing native settings in `app.json` can't ship over the air. Bump `version` in `app.json`, run `eas build`, and have everyone reinstall. The runtime version follows the app version, so old installs never receive an update they can't run.
+
+Pushes that only touch `supabase/` or Markdown files don't publish an update. Database changes are applied by hand in the SQL editor.
+
+## Database
+
+| Table / view | Purpose |
+|---|---|
+| `teams` | Team name and invite code |
+| `members` | One row per signed-in user, linked to their team |
+| `orders` | Date, title, delivery fee, `open` / `closed` status |
+| `order_items` | Name, unit price and quantity per line |
+| `claims` | Units of an item claimed by a member |
+| `settlements` | Which members are marked as paid for which month |
+| `push_tokens` | Expo push token per device (readable only by server functions) |
+| `order_member_totals` | Per-order, per-person food total and delivery share |
+| `member_month_totals` | Per-month, per-person totals with settlement status |
+
+Every table has row-level security scoped to the caller's team. Joining, creating teams, closing orders and registering push tokens go through `SECURITY DEFINER` functions.
+
+## Known limitations
+
+- **iOS** needs a paid Apple Developer account for installs and push notifications.
+- **Signing out doesn't unregister the device** from push notifications until another account signs in on it.
+- **Editing an order saves in several requests**, not one transaction. A failure midway can leave a partial edit that the orderer can redo.
+- **The orders list shows the latest 100 orders.**
+- **Push is sent in one request of up to 100 messages**, so teams with more than 100 devices would need chunking.
+- **The date field is typed text** (`YYYY-MM-DD`) rather than a date picker.
