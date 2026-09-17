@@ -41,6 +41,21 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
-    }
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/c251f27d-e583-40b2-bef7-5d1210b3924e",
+      "checkAutomatically": "ON_LOAD",
+      "fallbackToCacheTimeout": 3000
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "c251f27d-e583-40b2-bef7-5d1210b3924e"
+      }
+    },
+    "owner": "tahirrafiqg"
   }
 }
