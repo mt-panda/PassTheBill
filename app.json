@@ -11,6 +11,8 @@
       "icon": "./assets/images/icon.png"
     },
     "android": {
+      "package": "com.tahirrafiqg.passthebill",
+      "googleServicesFile": "./google-services.json",
       "adaptiveIcon": {
         "backgroundColor": "#1E4D3B",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -36,7 +38,8 @@
         {
           "enforceContrast": false
         }
-      ]
+      ],
+      "expo-notifications"
     ],
     "experiments": {
       "typedRoutes": true,

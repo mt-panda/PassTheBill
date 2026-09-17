@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "476942206069",
+    "project_id": "passthebill-e9870",
+    "storage_bucket": "passthebill-e9870.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:476942206069:android:08e7b7d0742205c8cda43c",
+        "android_client_info": {
+          "package_name": "com.tahirrafiqg.passthebill"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAuD0KzVDnXw0a7jNKgRtgYca61AP38Al8"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
