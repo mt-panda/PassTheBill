@@ -44,6 +44,8 @@ One person enters the order. Everyone taps what they ate. The app splits the del
 - **Teams by invite code.** Start a team and share its six-character code; teammates enter it to join.
 - **One order, many eaters.** The orderer enters each item with its price and quantity, plus the delivery fee.
 - **Claim by unit.** If three Zinger burgers were ordered, three people each tap **+** once. You can't claim more than was ordered.
+- **Order admin.** The person who created an order sees who claimed what, can leave anyone out of the delivery split, and can add an extra charge to a specific person.
+- **Accept or reject extra charges.** The charged person gets a notification and must accept before it counts. Rejecting notifies the creator and keeps the order from closing until the charge is removed.
 - **Live updates.** Claims and new orders show up on everyone's phone instantly.
 - **Push notifications.** Teammates get a notification when a new order is posted, even if the app is closed. Tapping it opens the order.
 - **Close to freeze.** An order can only be closed once every unit is claimed. After that, prices and claims are locked.
@@ -56,10 +58,11 @@ One person enters the order. Everyone taps what they ate. The app splits the del
 | Rule | Enforced by |
 |---|---|
 | Each person pays `units claimed × unit price` for their items | `order_member_totals` view |
-| Delivery is split equally among the people who claimed at least one item on that order | `order_member_totals` view |
+| Delivery is split equally among the people who claimed at least one item, minus anyone the creator left out | `order_member_totals` view |
+| Extra charges count only once the charged person accepts them | `order_member_totals` view, `respond_to_charge()` |
 | Nobody can claim more units than were ordered | `claims_units` trigger |
 | The orderer can't lower a quantity below what's already claimed | `items_qty` trigger |
-| An order can only be closed when every unit is claimed | `close_order()` function |
+| Only the creator can close an order, and only when every unit is claimed, every extra charge is accepted, and someone shares the delivery | `close_order()` function |
 | Closed orders can't be edited, re-claimed or deleted | Row-level security |
 | Marking people as paid is disabled while the month still has open orders | App |
 
@@ -82,15 +85,16 @@ Money rules live in Postgres, not in the app, so a bug or a modified client can'
 src/
 ├── app/                     # Screens (file-based routes)
 │   ├── _layout.tsx          # Session loading, route guards, theme, push setup
+│   ├── (tabs)/              # Bottom tabs: Orders, Totals, + New order, Settings
 │   ├── onboarding.tsx       # First-launch intro
 │   ├── sign-in.tsx          # "Continue with Google"
 │   ├── auth-callback.tsx    # Finishes Google sign-in when Android routes the redirect here
 │   ├── join.tsx             # Join a team by code, or create one
-│   ├── index.tsx            # Team orders
-│   ├── order/[id].tsx       # Order detail: claim items, split, close
+│   ├── (tabs)/index.tsx     # Team orders
+│   ├── order/[id].tsx       # Order detail: claim, per-person summary, extra charges, close
 │   ├── order-form.tsx       # New / edit order
-│   ├── totals.tsx           # Monthly totals and settle-up
-│   └── settings.tsx         # Profile, theme, sign out
+│   ├── (tabs)/totals.tsx    # Monthly totals and settle-up
+│   └── (tabs)/settings.tsx  # Profile, theme, sign out
 ├── components/              # UI kit (buttons, cards, inputs, badges), splash
 ├── constants/theme.ts       # Colours, fonts, spacing
 ├── hooks/                   # Colour scheme and theme hooks
@@ -100,8 +104,9 @@ src/
     └── push.ts              # Push registration and tap-to-open (push.web.ts is a no-op)
 supabase/
 ├── schema.sql               # Tables, RLS, triggers, RPCs, totals views
-├── check.sql                # Self-test for the money rules (rolls itself back)
-└── push.sql                 # Push token table and new-order notification trigger
+├── push.sql                 # Push token table and new-order notification trigger
+├── extras.sql               # Delivery exclusions, extra charges, charge notifications
+└── check.sql                # Self-test for the money rules (rolls itself back)
 .github/workflows/
 └── deploy.yml               # On every push to master: EAS build, then OTA update
 ```
@@ -140,8 +145,9 @@ Use the **publishable** key, never the secret/service-role key. It ships inside 
 In the Supabase SQL editor, run these in order:
 
 1. [`supabase/schema.sql`](supabase/schema.sql): tables, security rules and totals.
-2. [`supabase/check.sql`](supabase/check.sql): should end with the notice `check passed`. It rolls back, leaving no data.
-3. [`supabase/push.sql`](supabase/push.sql): push notification tokens and the new-order trigger.
+2. [`supabase/push.sql`](supabase/push.sql): push notification tokens and the new-order trigger.
+3. [`supabase/extras.sql`](supabase/extras.sql): delivery exclusions, extra charges, and their notifications.
+4. [`supabase/check.sql`](supabase/check.sql): should end with the notice `check passed`. It rolls back, leaving no data.
 
 ### 4. Google sign-in
 
@@ -178,7 +184,7 @@ Push doesn't work in Expo Go on Android. Use a build from EAS (see below).
    # → Manage your Google Service Account Key for Push Notifications (FCM V1)
    # → Set up … → Upload a new service account key
    ```
-4. Run `supabase/push.sql` if you haven't already.
+4. Run `supabase/push.sql` and `supabase/extras.sql` if you haven't already.
 
 When an order is inserted, Postgres calls the Expo Push API directly, so no Edge Function is needed. Every teammate except the orderer gets a notification. To debug deliveries:
 
@@ -230,6 +236,8 @@ Pushes that only touch `supabase/` or Markdown files don't publish an update. Da
 | `order_items` | Name, unit price and quantity per line |
 | `claims` | Units of an item claimed by a member |
 | `settlements` | Which members are marked as paid for which month |
+| `delivery_exclusions` | Members the creator left out of an order's delivery split |
+| `extra_charges` | Per-person extra charges with `pending` / `accepted` / `rejected` status |
 | `push_tokens` | Expo push token per device (readable only by server functions) |
 | `order_member_totals` | Per-order, per-person food total and delivery share |
 | `member_month_totals` | Per-month, per-person totals with settlement status |

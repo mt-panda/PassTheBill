@@ -9,6 +9,8 @@ declare
   o uuid;
   biryani uuid;
   naan uuid;
+  c2 uuid;
+  c3 uuid;
   r record;
 begin
   insert into auth.users (id, aud, role) values (u1, 'authenticated', 'authenticated'),
@@ -39,16 +41,57 @@ begin
   end;
 
   insert into claims (item_id, member_id, units) values (naan, u3, 3);
+
+  insert into delivery_exclusions (order_id, member_id) values (o, u3);
+  insert into extra_charges (order_id, member_id, label, amount) values (o, u2, 'Extra raita', 20) returning id into c2;
+  insert into extra_charges (order_id, member_id, label, amount) values (o, u3, 'Cold drink', 10) returning id into c3;
+
+  begin
+    perform close_order(o);
+    raise exception 'FAIL: closed with pending charges';
+  exception when raise_exception then
+    if sqlerrm like 'FAIL%' then raise; end if;
+  end;
+
+  perform set_config('request.jwt.claims', json_build_object('sub', u2)::text, true);
+  perform respond_to_charge(c2, true);
+
+  begin
+    perform close_order(o);
+    raise exception 'FAIL: non-creator closed the order';
+  exception when raise_exception then
+    if sqlerrm like 'FAIL%' then raise; end if;
+  end;
+
+  perform set_config('request.jwt.claims', json_build_object('sub', u3)::text, true);
+  perform respond_to_charge(c3, false);
+
+  perform set_config('request.jwt.claims', json_build_object('sub', u1)::text, true);
+  begin
+    perform close_order(o);
+    raise exception 'FAIL: closed with a rejected charge';
+  exception when raise_exception then
+    if sqlerrm like 'FAIL%' then raise; end if;
+  end;
+
+  delete from extra_charges where id = c3;
   perform close_order(o);
 
-  for r in select member_name, grand_total, all_closed from member_month_totals where team_id = tm.id loop
+  for r in select member_name, grand_total, delivery_total, extras_total, all_closed
+           from member_month_totals where team_id = tm.id loop
     if not r.all_closed then raise exception 'FAIL: % not closed', r.member_name; end if;
-    if (r.member_name, r.grand_total) not in (('Ali', 450.00), ('Sara', 400.00), ('Omar', 200.00)) then
+    if (r.member_name, r.grand_total) not in (('Ali', 475.00), ('Sara', 445.00), ('Omar', 150.00)) then
       raise exception 'FAIL: % got %', r.member_name, r.grand_total;
     end if;
+    if r.member_name = 'Omar' and r.delivery_total <> 0 then
+      raise exception 'FAIL: excluded member paid delivery';
+    end if;
+    if r.member_name = 'Sara' and r.extras_total <> 20 then
+      raise exception 'FAIL: accepted charge missing';
+    end if;
   end loop;
-  if (select sum(grand_total) from member_month_totals where team_id = tm.id) <> 1050 then
-    raise exception 'FAIL: totals do not sum to bill + delivery';
+  if (select sum(grand_total) from member_month_totals where team_id = tm.id) <> 1070 then
+    raise exception 'FAIL: totals do not sum to bill + delivery + accepted charges';
   end if;
 
   raise notice 'check passed';
