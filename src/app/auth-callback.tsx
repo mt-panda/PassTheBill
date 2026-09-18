@@ -1,14 +1,15 @@
-import { router, useLocalSearchParams } from 'expo-router';
-import { useEffect } from 'react';
+import { Redirect, useLocalSearchParams } from 'expo-router';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, View } from 'react-native';
 
 import { styles } from '@/components/ui';
 import { useSession } from '@/lib/session';
-import { completeSignIn } from '@/lib/supabase';
+import { completeSignIn, supabase } from '@/lib/supabase';
 
 export default function AuthCallback() {
   const { code, error_description } = useLocalSearchParams<{ code?: string; error_description?: string }>();
-  const { reload } = useSession();
+  const { member, reload } = useSession();
+  const [signedIn, setSignedIn] = useState<boolean>();
 
   useEffect(() => {
     const finish = async () => {
@@ -17,9 +18,15 @@ export default function AuthCallback() {
     };
     finish()
       .catch((e) => Alert.alert('Could not sign in', (e as Error).message))
-      .then(reload)
-      .finally(() => router.replace('/'));
+      .then(async () => {
+        await reload();
+        const { data } = await supabase.auth.getSession();
+        setSignedIn(!!data.session);
+      })
+      .catch(() => setSignedIn(false));
   }, [code, error_description]);
+
+  if (signedIn !== undefined) return <Redirect href={member ? '/' : signedIn ? '/join' : '/sign-in'} />;
 
   return (
     <View style={styles.center}>
