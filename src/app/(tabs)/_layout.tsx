@@ -55,6 +55,7 @@ export default function TabsLayout() {
       <Tabs.Screen name="index" options={{ title: 'Orders', headerShown: false, tabBarIcon: tabIcon('home') }} />
       <Tabs.Screen name="totals" options={{ title: 'Monthly totals', tabBarLabel: 'Totals', tabBarIcon: tabIcon('chart') }} />
       <Tabs.Screen name="new" options={{ title: 'New order', tabBarButton: () => <NewOrderButton /> }} />
+      <Tabs.Screen name="team" options={{ title: 'Team', tabBarIcon: tabIcon('people') }} />
       <Tabs.Screen name="settings" options={{ title: 'Settings', tabBarIcon: tabIcon('settings') }} />
     </Tabs>
   );

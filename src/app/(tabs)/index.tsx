@@ -1,11 +1,10 @@
-import { Link, router } from 'expo-router';
+import { Link } from 'expo-router';
 import { useState } from 'react';
-import { Alert, FlatList, Pressable, Share, View } from 'react-native';
+import { Alert, FlatList, Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
-import { Avatar, Badge, Button, Card, EmptyState, Icon, Row, styles } from '@/components/ui';
-import { Fonts } from '@/constants/theme';
+import { Badge, Card, EmptyState, Icon, Row, styles } from '@/components/ui';
 import { useTheme } from '@/hooks/use-theme';
 import { money, niceDate, useSession } from '@/lib/session';
 import { supabase, useLive } from '@/lib/supabase';
@@ -33,7 +32,7 @@ export default function OrdersScreen() {
     const { data, error } = await supabase
       .from('orders')
       .select(
-        'id, title, ordered_on, status, delivery_charge, created_by, creator:members(name), extra_charges(status, member_id), order_items(qty, unit_price, claims(units, member_id))'
+        'id, title, ordered_on, status, delivery_charge, created_by, creator:members!orders_created_by_fkey(name), extra_charges(status, member_id), order_items(qty, unit_price, claims(units, member_id))'
       )
       .order('ordered_on', { ascending: false })
       .order('created_at', { ascending: false })
@@ -43,7 +42,6 @@ export default function OrdersScreen() {
   });
 
   const team = member!.teams;
-  const share = () => Share.share({ message: `Join "${team.name}" on PassTheBill with code ${team.code}` });
 
   return (
     <FlatList
@@ -52,42 +50,14 @@ export default function OrdersScreen() {
       contentContainerStyle={[styles.screen, { paddingTop: insets.top + 16 }]}
       ListHeaderComponent={
         <View style={{ gap: 16 }}>
-          <Row style={{ alignItems: 'flex-start', marginBottom: 4 }}>
-            <View style={{ flexShrink: 1, gap: 4 }}>
+          <View style={{ flexShrink: 1, gap: 4, marginBottom: 4 }}>
               <ThemedText type="small" themeColor="textSecondary">
                 Hi {member!.name.split(' ')[0]}
               </ThemedText>
               <ThemedText type="subtitle" numberOfLines={1}>
                 {team.name}
               </ThemedText>
-            </View>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Settings"
-              hitSlop={8}
-              style={({ pressed }) => pressed && { opacity: 0.7 }}
-              onPress={() => router.navigate('/settings')}>
-              <Avatar name={member!.name} size={44} />
-            </Pressable>
-          </Row>
-          <Card>
-            <Row>
-              <View style={{ gap: 4, flexShrink: 1 }}>
-                <ThemedText type="label" themeColor="textSecondary">
-                  Invite your team
-                </ThemedText>
-                <ThemedText
-                  selectable
-                  style={{ fontFamily: Fonts.mono, fontSize: 24, lineHeight: 30, fontWeight: '700', letterSpacing: 3 }}>
-                  {team.code}
-                </ThemedText>
-              </View>
-              <Button title="Share" icon="share" variant="secondary" small onPress={share} />
-            </Row>
-            <ThemedText type="small" themeColor="textSecondary">
-              Teammates enter this code to join and claim their food.
-            </ThemedText>
-          </Card>
+          </View>
           {orders.length > 0 && (
             <Row style={styles.section}>
               <ThemedText type="label" themeColor="textSecondary">

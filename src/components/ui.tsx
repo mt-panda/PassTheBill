@@ -62,11 +62,12 @@ type ButtonProps = {
   disabled?: boolean;
   variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
   icon?: IconName;
+  left?: ReactNode;
   small?: boolean;
   style?: StyleProp<ViewStyle>;
 };
 
-export function Button({ title, onPress, disabled, variant = 'primary', icon, small, style }: ButtonProps) {
+export function Button({ title, onPress, disabled, variant = 'primary', icon, left, small, style }: ButtonProps) {
   const theme = useTheme();
   const variants: Record<typeof variant, [string, ThemeColor]> = {
     primary: [theme.primary, 'onPrimary'],
@@ -89,6 +90,7 @@ export function Button({ title, onPress, disabled, variant = 'primary', icon, sm
         pressed && pressedStyle,
         style,
       ]}>
+      {left}
       {icon && <Icon name={icon} size={small ? 16 : 18} color={fg} />}
       <ThemedText type="smallBold" themeColor={fg} style={small && { fontSize: 14 }}>
         {title}

@@ -16,6 +16,37 @@ const devAccounts = (__DEV__ ? (process.env.EXPO_PUBLIC_DEV_LOGINS ?? '') : '')
   })
   .filter((a) => a.email && a.password);
 
+function GoogleMark() {
+  const size = 20;
+  const stroke = 2.4;
+  return (
+    <View
+      style={{
+        width: size,
+        height: size,
+        borderRadius: size / 2,
+        borderWidth: stroke,
+        borderTopColor: '#EA4335',
+        borderRightColor: '#4285F4',
+        borderBottomColor: '#34A853',
+        borderLeftColor: '#FBBC05',
+        backgroundColor: '#FFFFFF',
+        overflow: 'hidden',
+      }}>
+      <View
+        style={{
+          position: 'absolute',
+          top: size / 2 - stroke / 2 - stroke,
+          right: -stroke,
+          width: size / 2 + stroke,
+          height: stroke,
+          backgroundColor: '#4285F4',
+        }}
+      />
+    </View>
+  );
+}
+
 export default function SignInScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
@@ -60,7 +91,7 @@ export default function SignInScreen() {
           </ThemedText>
         </View>
 
-        <Button title={busy ? 'Opening Google…' : 'Continue with Google'} disabled={busy} onPress={signIn} />
+        <Button title={busy ? 'Opening Google…' : 'Continue with Google'} left={<GoogleMark />} disabled={busy} onPress={signIn} />
         <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
           No password needed. New here? This creates your account.
         </ThemedText>

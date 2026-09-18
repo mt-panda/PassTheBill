@@ -55,7 +55,7 @@ export default function OrderScreen() {
       supabase
         .from('orders')
         .select(
-          '*, creator:members(name), delivery_exclusions(member_id), extra_charges(id, member_id, label, amount, status, members(name)), order_items(id, name, unit_price, qty, claims(id, member_id, units, members(name)))'
+          '*, creator:members!orders_created_by_fkey(name), delivery_exclusions(member_id), extra_charges(id, member_id, label, amount, status, members(name)), order_items(id, name, unit_price, qty, claims(id, member_id, units, members(name)))'
         )
         .eq('id', id)
         .maybeSingle(),

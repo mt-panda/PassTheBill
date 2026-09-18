@@ -65,8 +65,8 @@ const slides: { title: string; body: string; art: ReactNode }[] = [
     art: <Hero icon="tap" chips={['You × 1', 'Sara × 1', 'Ahmed × 1']} />,
   },
   {
-    title: 'Pay once a month',
-    body: 'At the end of the month, see who owes what and mark people as paid.',
+    title: 'Close each cycle',
+    body: 'Whenever your team is ready, trigger a tally, confirm totals, and close that billing cycle.',
     art: <Hero icon="money" chips={['Sara · Paid', 'Ahmed · Rs 5,750']} />,
   },
 ];
