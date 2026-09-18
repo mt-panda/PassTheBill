@@ -169,6 +169,14 @@ npx expo start --tunnel
 
 Scan the QR code with Expo Go.
 
+**Dev login.** Google sign-in in Expo Go needs tunnel mode. To skip it while developing, create test users in **Supabase → Authentication → Users → Add user** (tick *Auto Confirm User*) and list them in `.env`:
+
+```env
+EXPO_PUBLIC_DEV_LOGINS=tester1@example.com:password1,tester2@example.com:password2
+```
+
+A small hammer button then appears on the sign-in screen and signs in as one of them. It only exists in development; production builds contain neither the button logic nor the credentials.
+
 > **Why `--tunnel`?** On Wi-Fi, Expo Go uses an address like `exp://192.168.x.x:8081`, and Supabase's `**` wildcard never matches IP-address hosts. Sign-in then falls back to the Site URL and never returns to the app. Tunnel mode uses an `*.exp.direct` hostname, which matches. If you're not testing sign-in, plain `npx expo start` is faster.
 
 ## Push notifications

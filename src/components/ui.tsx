@@ -44,6 +44,7 @@ const icons = {
   person: sym('person.fill', 'person'),
   delivery: sym('bicycle', 'delivery_dining'),
   bell: sym('bell.fill', 'notifications'),
+  dev: sym('hammer.fill', 'build'),
 };
 
 export type IconName = keyof typeof icons;
