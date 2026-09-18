@@ -1,4 +1,4 @@
-import { Redirect, useLocalSearchParams } from 'expo-router';
+import { Redirect, useLocalSearchParams, type Href } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Alert, View } from 'react-native';
 
@@ -26,7 +26,7 @@ export default function AuthCallback() {
       .catch(() => setSignedIn(false));
   }, [code, error_description]);
 
-  if (signedIn !== undefined) return <Redirect href={member ? '/' : signedIn ? '/join' : '/sign-in'} />;
+  if (signedIn !== undefined) return <Redirect href={(member ? '/' : signedIn ? '/join' : '/sign-in') as Href} />;
 
   return (
     <View style={styles.center}>

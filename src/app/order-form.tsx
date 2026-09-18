@@ -1,9 +1,9 @@
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Alert, ScrollView } from 'react-native';
+import { Alert, ScrollView, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Button, Card, Divider, IconButton, Input, Row, styles } from '@/components/ui';
+import { Button, Card, Divider, IconButton, Input, Row, Stepper, styles } from '@/components/ui';
 import { CURRENCY, money, useSession, ymd } from '@/lib/session';
 import { supabase } from '@/lib/supabase';
 
@@ -154,21 +154,16 @@ export default function OrderFormScreen() {
             <Input placeholder="e.g. Zinger burger" value={r.name} onChangeText={(name) => update(r.key, { name })} />
             <Row style={{ alignItems: 'flex-start' }}>
               <Input
-                style={{ flex: 2 }}
+                style={{ flex: 1 }}
                 label={`Price each (${CURRENCY})`}
                 placeholder="0"
                 value={r.price}
                 onChangeText={(price) => update(r.key, { price })}
                 keyboardType="decimal-pad"
               />
-              <Input
-                style={{ flex: 1 }}
-                label="How many"
-                placeholder="1"
-                value={r.qty}
-                onChangeText={(qty) => update(r.key, { qty })}
-                keyboardType="number-pad"
-              />
+              <View style={{ width: 150 }}>
+                <Stepper label="How many" value={Number(r.qty) || 1} onChange={(n) => update(r.key, { qty: String(n) })} />
+              </View>
             </Row>
             {lineTotal(r) > 0 && (
               <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'right' }}>

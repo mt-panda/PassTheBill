@@ -94,24 +94,23 @@ export default function RootLayout() {
             headerTintColor: theme.text,
             headerTitleStyle: { fontWeight: '600' },
             headerBackButtonDisplayMode: 'minimal',
+            animation: 'ios_from_right',
           }}>
           <Stack.Protected guard={!userId && !onboarded}>
-            <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+            <Stack.Screen name="onboarding" options={{ headerShown: false, animation: 'fade' }} />
           </Stack.Protected>
           <Stack.Protected guard={!userId && onboarded}>
-            <Stack.Screen name="sign-in" options={{ headerShown: false }} />
+            <Stack.Screen name="sign-in" options={{ headerShown: false, animation: 'fade' }} />
           </Stack.Protected>
           <Stack.Protected guard={!!userId && !member}>
-            <Stack.Screen name="join" options={{ headerShown: false }} />
+            <Stack.Screen name="join" options={{ headerShown: false, animation: 'fade' }} />
           </Stack.Protected>
           <Stack.Protected guard={!!member}>
-            <Stack.Screen name="index" options={{ headerShown: false }} />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false, animation: 'fade' }} />
             <Stack.Screen name="order/[id]" options={{ title: 'Order' }} />
-            <Stack.Screen name="order-form" options={{ title: 'Order' }} />
-            <Stack.Screen name="totals" options={{ title: 'Monthly totals', headerLargeTitleEnabled: true }} />
-            <Stack.Screen name="settings" options={{ title: 'Settings' }} />
+            <Stack.Screen name="order-form" options={{ title: 'Order', animation: 'slide_from_bottom' }} />
           </Stack.Protected>
-          <Stack.Screen name="auth-callback" options={{ headerShown: false }} />
+          <Stack.Screen name="auth-callback" options={{ headerShown: false, animation: 'fade' }} />
         </Stack>
         {splash && <AnimatedSplash ready={ready} onDone={() => setSplash(false)} />}
         </View>

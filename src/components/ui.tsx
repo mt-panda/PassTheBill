@@ -37,6 +37,13 @@ const icons = {
   sun: sym('sun.max.fill', 'light_mode'),
   moon: sym('moon.fill', 'dark_mode'),
   phone: sym('iphone', 'smartphone'),
+  tap: sym('hand.tap.fill', 'touch_app'),
+  receipt: sym('doc.text.fill', 'receipt_long'),
+  home: sym('house.fill', 'home'),
+  settings: sym('gearshape.fill', 'settings'),
+  person: sym('person.fill', 'person'),
+  delivery: sym('bicycle', 'delivery_dining'),
+  bell: sym('bell.fill', 'notifications'),
 };
 
 export type IconName = keyof typeof icons;
@@ -170,7 +177,7 @@ export function Badge({ tone = 'neutral', icon, children }: { tone?: Tone; icon?
   return (
     <View style={[styles.badge, { backgroundColor: bg }]}>
       {icon && <Icon name={icon} size={12} color={fg} />}
-      <ThemedText type="smallBold" themeColor={fg} style={{ fontSize: 12, lineHeight: 16 }}>
+      <ThemedText type="smallBold" themeColor={fg} numberOfLines={1} style={{ fontSize: 12, lineHeight: 16 }}>
         {children}
       </ThemedText>
     </View>
@@ -245,6 +252,28 @@ export function Segmented<T extends string>({ options, value, onChange }: Segmen
   );
 }
 
+type StepperProps = { value: number; onChange: (value: number) => void; min?: number; label?: string };
+
+export function Stepper({ value, onChange, min = 1, label }: StepperProps) {
+  const theme = useTheme();
+  return (
+    <View style={styles.field}>
+      {label && (
+        <ThemedText type="smallBold" style={{ fontSize: 14 }}>
+          {label}
+        </ThemedText>
+      )}
+      <View style={[styles.stepper, { backgroundColor: theme.background, borderColor: theme.border }]}>
+        <IconButton icon="remove" label="Decrease" disabled={value <= min} onPress={() => onChange(Math.max(min, value - 1))} />
+        <ThemedText type="smallBold" style={{ minWidth: 28, textAlign: 'center', fontSize: 17, fontVariant: ['tabular-nums'] }}>
+          {value}
+        </ThemedText>
+        <IconButton icon="add" label="Increase" primary onPress={() => onChange(value + 1)} />
+      </View>
+    </View>
+  );
+}
+
 export function Divider() {
   const theme = useTheme();
   return <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: theme.border }} />;
@@ -288,6 +317,7 @@ export const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 4,
     alignSelf: 'flex-start',
+    flexShrink: 0,
     paddingHorizontal: 10,
     paddingVertical: 4,
     borderRadius: 999,
@@ -302,6 +332,14 @@ export const styles = StyleSheet.create({
     borderRadius: 11,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  stepper: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderRadius: 14,
+    padding: 5,
   },
   empty: { alignItems: 'center', gap: 10, paddingVertical: 48 },
   emptyIcon: { width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center', marginBottom: 6 },

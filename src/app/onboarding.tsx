@@ -15,135 +15,59 @@ import { scheduleOnRN } from 'react-native-worklets';
 
 import { LogoMark } from '@/components/splash';
 import { ThemedText } from '@/components/themed-text';
-import { Avatar, Badge, Button, Card, Divider, IconButton, Row } from '@/components/ui';
+import { Badge, Button, Icon, Row, type IconName } from '@/components/ui';
 import { useTheme } from '@/hooks/use-theme';
-import { money, useSession } from '@/lib/session';
+import { useSession } from '@/lib/session';
 
-function OrderArt() {
-  const line = (name: string, qty: number, price: number) => (
-    <Row>
-      <ThemedText type="small">{name}</ThemedText>
-      <ThemedText type="small" themeColor="textSecondary">
-        {qty} × {money(price)}
-      </ThemedText>
-    </Row>
-  );
-  return (
-    <Card>
-      <Row>
-        <ThemedText type="smallBold">KFC · Lunch</ThemedText>
-        <Badge tone="warning">Open</Badge>
-      </Row>
-      <Divider />
-      {line('Zinger burger', 3, 650)}
-      {line('Hot wings', 2, 450)}
-      {line('Fries', 4, 250)}
-      <Divider />
-      <Row>
-        <ThemedText type="smallBold">Total bill</ThemedText>
-        <ThemedText type="smallBold">{money(3 * 650 + 2 * 450 + 4 * 250 + 150)}</ThemedText>
-      </Row>
-    </Card>
-  );
-}
-
-function ClaimArt() {
+function Hero({ icon, chips }: { icon: IconName; chips: string[] }) {
   const theme = useTheme();
   return (
-    <View style={{ gap: 12 }}>
-      <Card style={{ borderColor: theme.primary, borderWidth: 1.5 }}>
-        <Row>
-          <View style={{ gap: 2 }}>
-            <ThemedText type="smallBold">Zinger burger</ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              {money(650)} each · 3 ordered
-            </ThemedText>
-          </View>
-          <Badge tone="success" icon="check">
-            All claimed
-          </Badge>
-        </Row>
-        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-          <Badge>You × 1</Badge>
-          <Badge>Sara × 1</Badge>
-          <Badge>Ahmed × 1</Badge>
+    <View style={{ alignItems: 'center', gap: 22 }}>
+      <View
+        style={{
+          width: 180,
+          height: 180,
+          borderRadius: 90,
+          backgroundColor: theme.backgroundSelected,
+          alignItems: 'center',
+          justifyContent: 'center',
+        }}>
+        <View
+          style={{
+            width: 104,
+            height: 104,
+            borderRadius: 32,
+            backgroundColor: theme.primary,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}>
+          <Icon name={icon} size={48} color="onPrimary" />
         </View>
-        <Divider />
-        <Row>
-          <ThemedText type="small">You had 1</ThemedText>
-          <Row>
-            <IconButton icon="remove" label="Unclaim" />
-            <ThemedText type="smallBold">1</ThemedText>
-            <IconButton icon="add" label="Claim" primary />
-          </Row>
-        </Row>
-      </Card>
-      <Card style={{ backgroundColor: theme.primary, borderColor: theme.primary }}>
-        <Row>
-          <ThemedText type="label" themeColor="onPrimary">
-            You pay
-          </ThemedText>
-          <ThemedText type="subtitle" themeColor="onPrimary" style={{ fontSize: 22 }}>
-            {money(700)}
-          </ThemedText>
-        </Row>
-      </Card>
+      </View>
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', gap: 8 }}>
+        {chips.map((c) => (
+          <Badge key={c}>{c}</Badge>
+        ))}
+      </View>
     </View>
-  );
-}
-
-function SettleArt() {
-  const person = (name: string, amount: number, paid: boolean) => (
-    <Row>
-      <Row style={{ flexShrink: 1 }}>
-        <Avatar name={name} />
-        <View style={{ gap: 2 }}>
-          <ThemedText type="smallBold">{name}</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            {money(amount)}
-          </ThemedText>
-        </View>
-      </Row>
-      {paid ? (
-        <Badge tone="success" icon="check">
-          Paid
-        </Badge>
-      ) : (
-        <Badge tone="warning">Not paid yet</Badge>
-      )}
-    </Row>
-  );
-  return (
-    <Card>
-      <Row>
-        <ThemedText type="label" themeColor="textSecondary">
-          September
-        </ThemedText>
-        <ThemedText type="smallBold">{money(18400)}</ThemedText>
-      </Row>
-      <Divider />
-      {person('Sara Ali', 6200, true)}
-      {person('Ahmed Raza', 5750, false)}
-      {person('Bilal Khan', 6450, true)}
-    </Card>
   );
 }
 
 const slides: { title: string; body: string; art: ReactNode }[] = [
   {
-    title: 'One person adds the order',
-    body: 'Whoever orders lunch enters the items and prices once. No more screenshots in the group chat.',
-    art: <OrderArt />,
+    title: 'Add lunch once',
+    body: 'Whoever orders types in what was bought. That is the only typing anyone does.',
+    art: <Hero icon="receipt" chips={['Zinger × 3', 'Fries × 4', 'Delivery']} />,
   },
   {
-    title: 'Everyone taps what they ate',
-    body: 'Teammates claim their own items. The delivery fee is split evenly between everyone who ate.',
-    art: <ClaimArt />,
+    title: 'Tap what you ate',
+    body: 'Everyone taps + on their food. The app splits the delivery fee for you.',
+    art: <Hero icon="tap" chips={['You × 1', 'Sara × 1', 'Ahmed × 1']} />,
   },
   {
-    title: 'Settle up once a month',
-    body: 'See exactly who owes what this month, and mark people as paid when they pay you back.',
-    art: <SettleArt />,
+    title: 'Pay once a month',
+    body: 'At the end of the month, see who owes what and mark people as paid.',
+    art: <Hero icon="money" chips={['Sara · Paid', 'Ahmed · Rs 5,750']} />,
   },
 ];
 

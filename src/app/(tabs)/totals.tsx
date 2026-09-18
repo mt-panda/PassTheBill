@@ -12,6 +12,7 @@ type Total = {
   member_name: string;
   items_total: number;
   delivery_total: number;
+  extras_total: number;
   grand_total: number;
   settled_at: string | null;
 };
@@ -43,7 +44,7 @@ export default function TotalsScreen() {
     setOpenOrders(o.count ?? 0);
   }
 
-  useLive('orders,order_items,claims,settlements', load, month);
+  useLive('orders,order_items,claims,settlements,extra_charges,delivery_exclusions', load, month);
 
   async function toggle(t: Total) {
     setBusy(true);
@@ -108,6 +109,7 @@ export default function TotalsScreen() {
                     </ThemedText>
                     <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 13 }}>
                       {money(t.items_total)} food + {money(t.delivery_total)} delivery
+                      {t.extras_total > 0 && ` + ${money(t.extras_total)} extra`}
                     </ThemedText>
                   </View>
                 </Row>
