@@ -1,12 +1,17 @@
-import Constants from 'expo-constants';
-import * as Notifications from 'expo-notifications';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import { router, type Href } from 'expo-router';
 import { useEffect, useRef } from 'react';
 import { Platform } from 'react-native';
 
 import { supabase } from '@/lib/supabase';
 
-Notifications.setNotificationHandler({
+type NotificationsModule = typeof import('expo-notifications');
+type NotificationResponse = import('expo-notifications').NotificationResponse;
+
+const Notifications: NotificationsModule | null =
+  Constants.executionEnvironment === ExecutionEnvironment.StoreClient ? null : require('expo-notifications');
+
+Notifications?.setNotificationHandler({
   handleNotification: async () => ({
     shouldPlaySound: true,
     shouldSetBadge: false,
@@ -15,34 +20,37 @@ Notifications.setNotificationHandler({
   }),
 });
 
-async function register() {
+async function register(N: NotificationsModule) {
   if (Platform.OS === 'android') {
-    await Notifications.setNotificationChannelAsync('default', {
+    await N.setNotificationChannelAsync('default', {
       name: 'New orders',
-      importance: Notifications.AndroidImportance.HIGH,
+      importance: N.AndroidImportance.HIGH,
     });
   }
-  const { granted } = await Notifications.requestPermissionsAsync();
+  const { granted } = await N.requestPermissionsAsync();
   if (!granted) return;
   const projectId = Constants.expoConfig?.extra?.eas?.projectId ?? Constants.easConfig?.projectId;
-  const { data: token } = await Notifications.getExpoPushTokenAsync({ projectId });
+  const { data: token } = await N.getExpoPushTokenAsync({ projectId });
   const { error } = await supabase.rpc('register_push_token', { p_token: token });
   if (error) throw error;
 }
 
 export function usePushNotifications(memberId: string | undefined) {
-  const response = Notifications.useLastNotificationResponse();
   const handled = useRef<string | null>(null);
 
   useEffect(() => {
-    if (memberId) register().catch((e) => __DEV__ && console.log('Push registration skipped:', e.message));
-  }, [memberId]);
+    if (!Notifications || !memberId) return;
+    register(Notifications).catch((e) => __DEV__ && console.log('Push registration skipped:', e.message));
 
-  useEffect(() => {
-    const id = response?.notification.request.identifier;
-    const url = response?.notification.request.content.data?.url;
-    if (!memberId || !id || handled.current === id || typeof url !== 'string') return;
-    handled.current = id;
-    router.push(url as Href);
-  }, [response, memberId]);
+    const open = (response: NotificationResponse | null) => {
+      const id = response?.notification.request.identifier;
+      const url = response?.notification.request.content.data?.url;
+      if (!id || handled.current === id || typeof url !== 'string') return;
+      handled.current = id;
+      router.push(url as Href);
+    };
+    open(Notifications.getLastNotificationResponse());
+    const subscription = Notifications.addNotificationResponseReceivedListener(open);
+    return () => subscription.remove();
+  }, [memberId]);
 }
