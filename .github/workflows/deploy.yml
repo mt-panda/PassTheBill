@@ -1,4 +1,4 @@
-name: Build and update
+name: Publish OTA update
 
 on:
   push:
@@ -7,6 +7,12 @@ on:
       - 'supabase/**'
       - '**.md'
   workflow_dispatch:
+    inputs:
+      native_build:
+        description: 'Build a new Android APK before publishing the update'
+        required: true
+        default: false
+        type: boolean
 
 concurrency:
   group: production-deploy
@@ -33,6 +39,9 @@ jobs:
 
       - run: npm ci
 
-      - run: eas build --profile production --platform android --non-interactive --wait --message "$MESSAGE"
+      - name: Build Android APK
+        if: github.event_name == 'workflow_dispatch' && inputs.native_build == true
+        run: eas build --profile production --platform android --non-interactive --wait --message "$MESSAGE"
 
-      - run: eas update --channel production --environment production --non-interactive --message "$MESSAGE"
+      - name: Publish OTA update
+        run: eas update --channel production --environment production --non-interactive --message "$MESSAGE"

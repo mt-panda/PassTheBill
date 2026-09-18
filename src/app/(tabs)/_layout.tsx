@@ -35,7 +35,7 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         animation: 'shift',
-        sceneStyle: { backgroundColor: theme.background },
+        sceneStyle: { backgroundColor: 'transparent' },
         headerStyle: { backgroundColor: theme.background },
         headerShadowVisible: false,
         headerTintColor: theme.text,

@@ -89,12 +89,29 @@ begin
       and o.status = 'closed'
       and not exists (select 1 from billing_cycle_orders co where co.order_id = o.id);
 
+    -- Only members who actually owe something in this cycle need to confirm.
+    -- Members with a zero total remain visible in the tally but do not block closing.
     insert into billing_cycle_confirmations (cycle_id, member_id)
-    select v_cycle.id, id from members where team_id = my_team_id();
+    select
+      v_cycle.id,
+      t.member_id
+    from order_member_totals t
+    join billing_cycle_orders co on co.order_id = t.order_id
+    where co.cycle_id = v_cycle.id
+    group by t.member_id
+    having sum(t.items_total + t.delivery_share + t.extras_total) > 0;
 
-    select array_agg(id) into v_members from members where team_id = my_team_id();
+    select array_agg(member_id) into v_members
+    from billing_cycle_confirmations
+    where cycle_id = v_cycle.id;
+
     if v_members is not null then
-      perform send_push(v_members, 'Tally started', 'Your team tally is ready. Tap to confirm your total.', '/totals');
+      perform send_push(
+        v_members,
+        'Tally started',
+        'Your team tally is ready. Tap to confirm your total.',
+        '/totals'
+      );
     end if;
   end if;
 
@@ -108,7 +125,14 @@ begin
   set confirmed_at = now()
   where cf.cycle_id = p_cycle_id
     and cf.member_id = auth.uid()
-    and exists (select 1 from billing_cycles c where c.id = p_cycle_id and c.team_id = my_team_id() and c.status = 'open');
+    and exists (
+      select 1
+      from billing_cycles c
+      where c.id = p_cycle_id
+        and c.team_id = my_team_id()
+        and c.status = 'open'
+    );
+
   if not found then raise exception 'cycle not found or already closed'; end if;
 end $$;
 
@@ -117,16 +141,26 @@ language plpgsql security definer set search_path = public as $$
 begin
   if not exists (
     select 1 from billing_cycles
-    where id = p_cycle_id and team_id = my_team_id() and triggered_by = auth.uid() and status = 'open'
+    where id = p_cycle_id
+      and team_id = my_team_id()
+      and triggered_by = auth.uid()
+      and status = 'open'
   ) then
     raise exception 'only the person who started this tally can close it';
   end if;
 
-  if exists (select 1 from billing_cycle_confirmations where cycle_id = p_cycle_id and confirmed_at is null) then
-    raise exception 'everyone must confirm before closing the cycle';
+  if exists (
+    select 1
+    from billing_cycle_confirmations
+    where cycle_id = p_cycle_id
+      and confirmed_at is null
+  ) then
+    raise exception 'all participating members must confirm before closing the cycle';
   end if;
 
-  update billing_cycles set status = 'closed', closed_at = now() where id = p_cycle_id;
+  update billing_cycles
+  set status = 'closed', closed_at = now()
+  where id = p_cycle_id;
 end $$;
 
 alter publication supabase_realtime add table billing_cycles, billing_cycle_confirmations;
