@@ -28,7 +28,43 @@ export default function OrdersScreen() {
   const insets = useSafeAreaInsets();
   const [orders, setOrders] = useState<OrderRow[]>([]);
 
-  useLive('orders,order_items,claims,extra_charges', async () => {
+  useLive('billing_cycles,billing_cycle_orders,orders,order_items,claims,extra_charges', async () => {
+    // The Orders tab represents the team's current working cycle:
+    //   1. orders already included in the currently-open tally, plus
+    //   2. brand-new orders that have not yet been included in any tally.
+    //
+    // Orders belonging only to closed billing cycles are excluded.
+    // This also means that closing a cycle removes its orders from this
+    // screen automatically, while newly-created orders remain visible.
+
+    const [{ data: openCycle, error: cycleError }, { data: cycleOrderRows, error: cycleOrdersError }] =
+      await Promise.all([
+        supabase
+          .from('billing_cycles')
+          .select('id')
+          .eq('status', 'open')
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle(),
+        supabase.from('billing_cycle_orders').select('cycle_id, order_id'),
+      ]);
+
+    if (cycleError) {
+      return Alert.alert('Could not load current cycle', cycleError.message);
+    }
+
+    if (cycleOrdersError) {
+      return Alert.alert('Could not load cycle orders', cycleOrdersError.message);
+    }
+
+    const openCycleOrderIds = new Set(
+      (cycleOrderRows ?? [])
+        .filter((row) => row.cycle_id === openCycle?.id)
+        .map((row) => row.order_id)
+    );
+
+    const historicallyTalliedOrderIds = new Set((cycleOrderRows ?? []).map((row) => row.order_id));
+
     const { data, error } = await supabase
       .from('orders')
       .select(
@@ -37,8 +73,17 @@ export default function OrdersScreen() {
       .order('ordered_on', { ascending: false })
       .order('created_at', { ascending: false })
       .limit(100);
+
     if (error) return Alert.alert('Could not load orders', error.message);
-    setOrders(data as unknown as OrderRow[]);
+
+    // Keep orders from the open tally AND orders that haven't been assigned
+    // to any tally yet. Anything belonging only to a closed tally disappears.
+    const currentOrderIds = new Set([
+      ...openCycleOrderIds,
+      ...(data ?? []).filter((order) => !historicallyTalliedOrderIds.has(order.id)).map((order) => order.id),
+    ]);
+
+    setOrders((data ?? []).filter((order) => currentOrderIds.has(order.id)) as unknown as OrderRow[]);
   });
 
   const team = member!.teams;
@@ -51,17 +96,18 @@ export default function OrdersScreen() {
       ListHeaderComponent={
         <View style={{ gap: 16 }}>
           <View style={{ flexShrink: 1, gap: 4, marginBottom: 4 }}>
-              <ThemedText type="small" themeColor="textSecondary">
-                Hi {member!.name.split(' ')[0]}
-              </ThemedText>
-              <ThemedText type="subtitle" numberOfLines={1}>
-                {team.name}
-              </ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Hi {member!.name.split(' ')[0]}
+            </ThemedText>
+            <ThemedText type="subtitle" numberOfLines={1}>
+              {team.name}
+            </ThemedText>
           </View>
+
           {orders.length > 0 && (
             <Row style={styles.section}>
               <ThemedText type="label" themeColor="textSecondary">
-                Orders
+                Current cycle orders
               </ThemedText>
               <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 13 }}>
                 Tap one to claim your food
@@ -73,8 +119,8 @@ export default function OrdersScreen() {
       ListEmptyComponent={
         <EmptyState
           icon="food"
-          title="No orders yet"
-          text="Tap the + button below to add what was ordered. Your team can then claim their items."
+          title="No current cycle orders"
+          text="Orders for the current cycle will appear here."
         />
       }
       renderItem={({ item: o }) => {
@@ -85,6 +131,7 @@ export default function OrdersScreen() {
         const total = o.order_items.reduce((s, i) => s + i.qty * i.unit_price, 0) + o.delivery_charge;
         const myPending = o.extra_charges.some((c) => c.member_id === me && c.status === 'pending');
         const unresolved = o.extra_charges.some((c) => c.status !== 'accepted');
+
         const badge =
           o.status === 'closed' ? (
             <Badge icon="lock">Closed</Badge>
@@ -101,6 +148,7 @@ export default function OrdersScreen() {
               Ready to close
             </Badge>
           );
+
         return (
           <Link href={{ pathname: '/order/[id]', params: { id: o.id } }} asChild>
             <Pressable style={({ pressed }) => pressed && { opacity: 0.7, transform: [{ scale: 0.99 }] }}>
@@ -116,6 +164,7 @@ export default function OrdersScreen() {
                   }}>
                   <Icon name="food" size={20} />
                 </View>
+
                 <View style={{ flex: 1, gap: 6 }}>
                   <Row>
                     <ThemedText type="smallBold" numberOfLines={1} style={{ flexShrink: 1 }}>
@@ -125,9 +174,11 @@ export default function OrdersScreen() {
                       {money(total)}
                     </ThemedText>
                   </Row>
+
                   <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
                     {niceDate(o.ordered_on)} · by {o.created_by === me ? 'you' : o.creator.name}
                   </ThemedText>
+
                   <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
                     {badge}
                     {mine > 0 && (
@@ -137,6 +188,7 @@ export default function OrdersScreen() {
                     )}
                   </View>
                 </View>
+
                 <Icon name="forward" size={14} color="textSecondary" />
               </Card>
             </Pressable>
