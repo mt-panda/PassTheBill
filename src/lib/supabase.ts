@@ -1,9 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import * as Linking from 'expo-linking';
+import { Platform } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
 import { useCallback, useEffectEvent } from 'react';
+
+// Required by expo-web-browser for OAuth completion on web.
+WebBrowser.maybeCompleteAuthSession();
 
 export const supabase = createClient(
   process.env.EXPO_PUBLIC_SUPABASE_URL!,
@@ -19,8 +23,16 @@ export const supabase = createClient(
   }
 );
 
+function getAuthRedirectUrl() {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    return `${window.location.origin}/auth-callback`;
+  }
+
+  return Linking.createURL('auth-callback');
+}
+
 export async function signInWithGoogle() {
-  const redirectTo = Linking.createURL('auth-callback');
+  const redirectTo = getAuthRedirectUrl();
   if (__DEV__) console.log('Google sign-in redirect URL:', redirectTo);
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',

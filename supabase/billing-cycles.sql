@@ -43,19 +43,19 @@ create or replace view billing_cycle_member_totals with (security_invoker = on) 
 select
   c.id as cycle_id,
   c.team_id,
-  t.member_id,
+  m.id as member_id,
   m.name as member_name,
-  sum(t.items_total) as items_total,
-  sum(t.delivery_share) as delivery_total,
-  sum(t.extras_total) as extras_total,
-  sum(t.items_total + t.delivery_share + t.extras_total) as grand_total,
+  coalesce(sum(t.items_total), 0) as items_total,
+  coalesce(sum(t.delivery_share), 0) as delivery_total,
+  coalesce(sum(t.extras_total), 0) as extras_total,
+  coalesce(sum(t.items_total + t.delivery_share + t.extras_total), 0) as grand_total,
   cf.confirmed_at
 from billing_cycles c
-join billing_cycle_orders co on co.cycle_id = c.id
-join order_member_totals t on t.order_id = co.order_id
-join members m on m.id = t.member_id
-left join billing_cycle_confirmations cf on cf.cycle_id = c.id and cf.member_id = t.member_id
-group by c.id, c.team_id, t.member_id, m.name, cf.confirmed_at;
+join members m on m.team_id = c.team_id
+left join billing_cycle_orders co on co.cycle_id = c.id
+left join order_member_totals t on t.order_id = co.order_id and t.member_id = m.id
+left join billing_cycle_confirmations cf on cf.cycle_id = c.id and cf.member_id = m.id
+group by c.id, c.team_id, m.id, m.name, cf.confirmed_at;
 
 create or replace view untallied_closed_orders with (security_invoker = on) as
 select o.id
