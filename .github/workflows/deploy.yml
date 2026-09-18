@@ -1,0 +1,38 @@
+name: Build and update
+
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - 'supabase/**'
+      - '**.md'
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      MESSAGE: ${{ github.event.head_commit.message || 'Manual deploy' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - run: npm ci
+
+      - run: eas build --profile production --platform android --non-interactive --wait --message "$MESSAGE"
+
+      - run: eas update --channel production --environment production --non-interactive --message "$MESSAGE"

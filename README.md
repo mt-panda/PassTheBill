@@ -49,7 +49,7 @@ One person enters the order. Everyone taps what they ate. The app splits the del
 - **Close to freeze.** An order can only be closed once every unit is claimed. After that, prices and claims are locked.
 - **Monthly totals.** See each person's food and delivery totals for any month, and mark people as paid.
 - **Light and dark themes.** Follows the phone's setting, or can be pinned in Settings.
-- **Over-the-air updates.** Pushing to `master` updates every installed copy of the app without a reinstall.
+- **Automatic deploys.** Every push to `master` builds the app on EAS and, if the build succeeds, updates every installed copy without a reinstall.
 
 ## How the money works
 
@@ -103,7 +103,7 @@ supabase/
 ├── check.sql                # Self-test for the money rules (rolls itself back)
 └── push.sql                 # Push token table and new-order notification trigger
 .github/workflows/
-└── eas-update.yml           # Publishes an OTA update on every push to master
+└── deploy.yml               # On every push to master: EAS build, then OTA update
 ```
 
 ## Getting started
@@ -207,7 +207,12 @@ This produces an APK with a shareable install link.
 
 ### Over-the-air updates
 
-Every push to `master` runs [`.github/workflows/eas-update.yml`](.github/workflows/eas-update.yml), which publishes the new JavaScript bundle to the `production` channel. Installed apps check on launch, wait up to 3 seconds for a new update, and otherwise apply it on the next launch.
+Every push to `master` runs [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
+
+1. **EAS build.** A full Android production build. If it fails, the workflow stops and nothing reaches users.
+2. **EAS update.** Only after a successful build, the new JavaScript bundle is published to the `production` channel.
+
+Installed apps check on launch, wait up to 3 seconds for a new update, and otherwise apply it on the next launch. Each run uses one EAS build from your plan's quota and waits in the EAS build queue, so a deploy can take 10–30+ minutes. Deploys run one at a time; you can also start one from **Actions → Build and update → Run workflow**.
 
 One-time setup: create an access token at **expo.dev → Account settings → Access tokens** and add it to the GitHub repo as the Actions secret `EXPO_TOKEN`.
 
