@@ -1,6 +1,6 @@
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Alert, ScrollView, View } from 'react-native';
+import { Alert, Image, ScrollView, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import { Avatar, Badge, Button, Card, Divider, EmptyState, IconButton, Input, Row, styles } from '@/components/ui';
@@ -9,7 +9,14 @@ import { CURRENCY, money, niceDate, useSession } from '@/lib/session';
 import { supabase, useLive } from '@/lib/supabase';
 
 type Claim = { id: string; member_id: string; units: number; members: { name: string } };
-type Item = { id: string; name: string; unit_price: number; qty: number; claims: Claim[] };
+type Item = {
+  id: string;
+  name: string;
+  unit_price: number;
+  qty: number;
+  image_url: string | null;
+  claims: Claim[];
+};
 type ChargeStatus = 'pending' | 'accepted' | 'rejected';
 type Charge = {
   id: string;
@@ -55,7 +62,7 @@ export default function OrderScreen() {
       supabase
         .from('orders')
         .select(
-          '*, creator:members!orders_created_by_fkey(name), delivery_exclusions(member_id), extra_charges(id, member_id, label, amount, status, members(name)), order_items(id, name, unit_price, qty, claims(id, member_id, units, members(name)))'
+          '*, creator:members!orders_created_by_fkey(name), delivery_exclusions(member_id), extra_charges(id, member_id, label, amount, status, members(name)), order_items(id, name, unit_price, qty, image_url, claims(id, member_id, units, members(name)))'
         )
         .eq('id', id)
         .maybeSingle(),
@@ -331,11 +338,32 @@ export default function OrderScreen() {
           return (
             <Card key={item.id} style={mine > 0 && { borderColor: theme.primary, borderWidth: 1.5 }}>
               <Row style={{ alignItems: 'flex-start' }}>
-                <View style={{ flex: 1, gap: 4 }}>
-                  <ThemedText type="smallBold">{item.name}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {money(item.unit_price)} each · {item.qty} ordered
-                  </ThemedText>
+                <View
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 10,
+                    flex: 1,
+                  }}
+                >
+                  {item.image_url ? (
+                    <Image
+                      source={{ uri: item.image_url }}
+                      style={{
+                        width: 64,
+                        height: 64,
+                        borderRadius: 10,
+                      }}
+                      resizeMode="cover"
+                    />
+                  ) : null}
+
+                  <View style={{ flex: 1, gap: 4 }}>
+                    <ThemedText type="smallBold">{item.name}</ThemedText>
+                    <ThemedText type="small" themeColor="textSecondary">
+                      {money(item.unit_price)} each · {item.qty} ordered
+                    </ThemedText>
+                  </View>
                 </View>
                 {left > 0 ? (
                   <Badge tone="warning">{`${left} left`}</Badge>
