@@ -9,20 +9,11 @@ One person enters the order. Everyone taps what they ate. The app splits the del
 ![Supabase](https://img.shields.io/badge/Supabase-Postgres-3FCF8E?logo=supabase&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-6-3178C6?logo=typescript&logoColor=white)
 
-<table>
-  <tr>
-    <td align="center"><img src="docs/screenshots/orders.png" width="240" alt="Orders list" /><br /><sub><b>Team orders</b></sub></td>
-    <td align="center"><img src="docs/screenshots/order.png" width="240" alt="Claiming items on an order" /><br /><sub><b>Claim what you ate</b></sub></td>
-    <td align="center"><img src="docs/screenshots/totals.png" width="240" alt="Monthly totals" /><br /><sub><b>Monthly totals</b></sub></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/screenshots/order-form.png" width="240" alt="Order form" /><br /><sub><b>Add or edit an order</b></sub></td>
-    <td align="center"><img src="docs/screenshots/orders-dark.png" width="240" alt="Dark mode" /><br /><sub><b>Dark mode</b></sub></td>
-    <td align="center"><img src="docs/screenshots/sign-in.png" width="240" alt="Google sign-in" /><br /><sub><b>Google sign-in</b></sub></td>
-  </tr>
-</table>
+<p align="center">
+  <img src="docs/screenshots/app-showcase.png" width="100%" alt="PassTheBill app showcase" />
+</p>
 
-<sub>Screenshots show demo data.</sub>
+<sub>Product showcase with demo data.</sub>
 
 ---
 
@@ -51,7 +42,7 @@ One person enters the order. Everyone taps what they ate. The app splits the del
 - **Close to freeze.** An order can only be closed once every unit is claimed. After that, prices and claims are locked.
 - **Monthly totals.** See each person's food and delivery totals for any month, and mark people as paid.
 - **Light and dark themes.** Follows the phone's setting, or can be pinned in Settings.
-- **Automatic deploys.** Every push to `master` builds the app on EAS and, if the build succeeds, updates every installed copy without a reinstall.
+- **Over-the-air updates.** Normal JavaScript, UI, and asset changes can be published through EAS Update without reinstalling the app. Native changes still require a new build.
 
 ## How the money works
 
@@ -81,7 +72,7 @@ Money rules live in Postgres, not in the app, so a bug or a modified client can'
 
 ## Project structure
 
-```
+```text
 src/
 ├── app/                     # Screens (file-based routes)
 │   ├── _layout.tsx          # Session loading, route guards, theme, push setup
@@ -108,7 +99,7 @@ supabase/
 ├── extras.sql               # Delivery exclusions, extra charges, charge notifications
 └── check.sql                # Self-test for the money rules (rolls itself back)
 .github/workflows/
-└── deploy.yml               # On every push to master: EAS build, then OTA update
+└── deploy.yml               # Publishes OTA updates; production builds are only needed for native changes
 ```
 
 ## Getting started
@@ -177,7 +168,7 @@ EXPO_PUBLIC_DEV_LOGINS=tester1@example.com:password1,tester2@example.com:passwor
 
 A small hammer button then appears on the sign-in screen and signs in as one of them. It only exists in development; production builds contain neither the button logic nor the credentials.
 
-> **Why `--tunnel`?** On Wi-Fi, Expo Go uses an address like `exp://192.168.x.x:8081`, and Supabase's `**` wildcard never matches IP-address hosts. Sign-in then falls back to the Site URL and never returns to the app. Tunnel mode uses an `*.exp.direct` hostname, which matches. If you're not testing sign-in, plain `npx expo start` is faster.
+> **Why `--tunnel`?** On Wi-Fi, Expo Go uses an address like `exp://192.168.x.x:8081`, and Supabase's `**` wildcard never matches IP-address hosts. Tunnel mode uses an `*.exp.direct` hostname, which matches. If you're not testing sign-in, plain `npx expo start` is faster.
 
 ## Push notifications
 
@@ -221,18 +212,35 @@ This produces an APK with a shareable install link.
 
 ### Over-the-air updates
 
-Every push to `master` runs [`.github/workflows/deploy.yml`](.github/workflows/deploy.yml):
+Normal code/UI fixes do **not** require a new APK.
 
-1. **EAS build.** A full Android production build. If it fails, the workflow stops and nothing reaches users.
-2. **EAS update.** Only after a successful build, the new JavaScript bundle is published to the `production` channel.
+After the first compatible production build is installed, push normal app changes to `master`. GitHub Actions publishes the JavaScript update to the `production` EAS Update channel:
 
-Installed apps check on launch, wait up to 3 seconds for a new update, and otherwise apply it on the next launch. Each run uses one EAS build from your plan's quota and waits in the EAS build queue, so a deploy can take 10–30+ minutes. Deploys run one at a time; you can also start one from **Actions → Build and update → Run workflow**.
+```text
+git push
+   ↓
+GitHub Actions
+   ↓
+EAS Update → production
+   ↓
+Installed app downloads the update
+   ↓
+No reinstall
+```
+
+You can also publish manually:
+
+```bash
+eas update --channel production --environment production --message "Bug fixes"
+```
+
+Installed apps check for updates on launch. The update is downloaded and applied on the next launch when necessary.
+
+A **new EAS build is still required** for native changes such as adding native packages, changing Android permissions/configuration, changing native notification behavior, or upgrading the Expo SDK. After a native build, users need to install the new APK.
 
 One-time setup: create an access token at **expo.dev → Account settings → Access tokens** and add it to the GitHub repo as the Actions secret `EXPO_TOKEN`.
 
-> **Native changes need a new build.** Adding a native package, upgrading the Expo SDK, or changing native settings in `app.json` can't ship over the air. Bump `version` in `app.json`, run `eas build`, and have everyone reinstall. The runtime version follows the app version, so old installs never receive an update they can't run.
-
-Pushes that only touch `supabase/` or Markdown files don't publish an update. Database changes are applied by hand in the SQL editor.
+Pushes that only touch `supabase/` or Markdown files don't publish an app update. Database changes are applied by hand in the SQL editor.
 
 ## Database
 
