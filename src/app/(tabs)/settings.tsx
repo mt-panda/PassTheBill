@@ -1,229 +1,258 @@
-import { useState } from 'react';
-import { Alert, Modal, Platform, Pressable, ScrollView, View } from 'react-native';
+import Constants from 'expo-constants';
+import { useFocusEffect, useRouter } from 'expo-router';
+import * as Updates from 'expo-updates';
+import { useCallback, useEffect, useState } from 'react';
+import { AppState, Platform, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Avatar, Button, Card, Input, Row, Segmented, styles } from '@/components/ui';
-import { useTheme } from '@/hooks/use-theme';
-import { useSession } from '@/lib/session';
+import { Avatar, BottomSheet, Button, Card, Divider, Icon, Input, ListRow, Row, Screen, SectionHeader, Segmented, useToast } from '@/components/ui';
+import { Spacing } from '@/constants/theme';
+import { friendlyError, reportError } from '@/lib/errors';
+import {
+  enableNotifications,
+  getNotificationStatus,
+  openNotificationSettings,
+  registerIfGranted,
+  unregisterPushToken,
+  type NotificationStatus,
+} from '@/lib/push';
+import { useSession, type ThemePref } from '@/lib/session';
 import { supabase } from '@/lib/supabase';
 
+export { RouteErrorBoundary as ErrorBoundary } from '@/components/ui';
+
+type Sheet = null | 'profile' | 'appearance' | 'feedback' | 'signout';
 type FeedbackType = 'bug' | 'suggestion';
 
+const THEME_LABEL: Record<ThemePref, string> = { light: 'Light', dark: 'Dark', system: 'System' };
+
+function versionLine() {
+  const update = !Updates.isEnabled ? 'dev' : Updates.isEmbeddedLaunch ? 'built-in' : (Updates.updateId ?? '').slice(0, 8);
+  return `PassTheBill ${Constants.expoConfig?.version ?? ''} · ${update}`;
+}
+
 export default function SettingsScreen() {
+  const router = useRouter();
+  const toast = useToast();
   const { member, themePref, setThemePref, reload } = useSession();
-  const theme = useTheme();
   const me = member!;
-
-  const [editNameOpen, setEditNameOpen] = useState(false);
+  const [email, setEmail] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<Sheet>(null);
+  const [busy, setBusy] = useState(false);
+  const [sheetError, setSheetError] = useState<string | null>(null);
   const [name, setName] = useState(me.name);
-  const [savingName, setSavingName] = useState(false);
-
-  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [feedbackType, setFeedbackType] = useState<FeedbackType>('bug');
   const [feedback, setFeedback] = useState('');
-  const [savingFeedback, setSavingFeedback] = useState(false);
+  const [notif, setNotif] = useState<NotificationStatus | null>(null);
 
-  const signOut = () =>
-    Alert.alert('Sign out?', 'You can sign back in with Google any time.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Sign out', style: 'destructive', onPress: () => supabase.auth.signOut() },
-    ]);
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) => setEmail(data.user?.email ?? null));
+  }, []);
 
-  function openEditName() {
-    setName(me.name);
-    setEditNameOpen(true);
-  }
+  // Permission can change in system settings: refresh on focus and when the app comes back.
+  const refreshNotif = useCallback(async () => {
+    const next = await getNotificationStatus();
+    setNotif((prev) => {
+      if (prev?.state === 'off' && next.state === 'on') void registerIfGranted();
+      return next;
+    });
+  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      void refreshNotif();
+      const sub = AppState.addEventListener('change', (s) => s === 'active' && void refreshNotif());
+      return () => sub.remove();
+    }, [refreshNotif])
+  );
+
+  const open = (s: Sheet) => {
+    setSheetError(null);
+    setSheet(s);
+  };
+  const close = () => setSheet(null);
 
   async function saveName() {
-    const nextName = name.trim();
-
-    if (!nextName) return Alert.alert('Name required', 'Please enter your name.');
-    if (nextName.length > 60) return Alert.alert('Name too long', 'Please keep your name under 60 characters.');
-
-    setSavingName(true);
-    const { error } = await supabase.from('members').update({ name: nextName }).eq('id', me.id);
-
+    const next = name.trim();
+    if (!next) return setSheetError('Please enter your name.');
+    if (next.length > 60) return setSheetError('Please keep your name under 60 characters.');
+    setBusy(true);
+    const { error } = await supabase.from('members').update({ name: next }).eq('id', me.id);
     if (error) {
-      setSavingName(false);
-      return Alert.alert('Could not update name', error.message);
+      setBusy(false);
+      reportError('settings.name', error);
+      return setSheetError(friendlyError(error).message);
     }
-
-    await reload();
-    setSavingName(false);
-    setEditNameOpen(false);
+    const r = await reload();
+    setBusy(false);
+    if (r.error) return setSheetError(r.error.message);
+    close();
+    toast.show('Profile updated');
   }
 
-  function openFeedback() {
-    setFeedbackType('bug');
-    setFeedback('');
-    setFeedbackOpen(true);
-  }
-
-  async function saveFeedback() {
+  async function sendFeedback() {
     const message = feedback.trim();
-
-    if (!message) return Alert.alert('Message required', 'Please tell us what happened or what you would like to see.');
-    if (message.length > 2000) return Alert.alert('Message too long', 'Please keep your feedback under 2000 characters.');
-
-    setSavingFeedback(true);
-    const { error } = await supabase.from('feedback').insert({
-      user_id: me.id,
-      team_id: me.team_id,
-      type: feedbackType,
-      message,
-      platform: Platform.OS,
-    });
-
-    setSavingFeedback(false);
-
-    if (error) return Alert.alert('Could not send feedback', error.message);
-
-    setFeedbackOpen(false);
+    if (!message) return setSheetError('Tell us what happened or what you’d like to see.');
+    if (message.length > 2000) return setSheetError('Please keep it under 2000 characters.');
+    setBusy(true);
+    const { error } = await supabase
+      .from('feedback')
+      .insert({ user_id: me.id, team_id: me.team_id, type: feedbackType, message, platform: Platform.OS });
+    setBusy(false);
+    if (error) {
+      reportError('settings.feedback', error);
+      return setSheetError(friendlyError(error).message);
+    }
     setFeedback('');
-    Alert.alert('Thanks!', 'Your feedback has been sent.');
+    close();
+    toast.show('Feedback sent');
   }
+
+  async function signOut() {
+    setBusy(true);
+    await unregisterPushToken();
+    await supabase.auth.signOut();
+    setBusy(false);
+  }
+
+  async function onNotifications() {
+    if (!notif || notif.state === 'unavailable') return;
+    if (notif.state === 'off' && notif.canAskAgain) return setNotif(await enableNotifications());
+    await openNotificationSettings();
+  }
+
+  const notifLabel = !notif ? '…' : notif.state === 'on' ? 'On' : notif.state === 'off' ? 'Off' : 'Not available';
 
   return (
-    <>
-      <ScrollView contentContainerStyle={styles.screen} contentInsetAdjustmentBehavior="automatic" keyboardShouldPersistTaps="handled">
-        <Card>
-          <Row style={{ justifyContent: 'flex-start' }}>
-            <Avatar name={me.name} size={56} />
-            <View style={{ flex: 1, gap: 3 }}>
-              <ThemedText type="smallBold" style={{ fontSize: 18 }} numberOfLines={1}>
-                {me.name}
-              </ThemedText>
-              <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                {me.teams.name} · code {me.teams.code}
-              </ThemedText>
-            </View>
-            <Button title="Edit" icon="edit" variant="secondary" small onPress={openEditName} />
-          </Row>
-        </Card>
+    <Screen>
+      <ThemedText type="screenTitle">Settings</ThemedText>
 
+      <SectionHeader title="Your account" />
+      <Card>
+        <Row style={{ justifyContent: 'flex-start' }}>
+          <Avatar name={me.name} size={48} />
+          <View style={{ flex: 1, minWidth: 0 }}>
+            <ThemedText type="bodyStrong" numberOfLines={1}>
+              {me.name}
+            </ThemedText>
+            {email ? (
+              <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
+                {email}
+              </ThemedText>
+            ) : null}
+          </View>
+        </Row>
+        <Button
+          title="Edit profile"
+          icon="edit"
+          variant="secondary"
+          onPress={() => {
+            setName(me.name);
+            open('profile');
+          }}
+        />
+      </Card>
+
+      <SectionHeader title="Preferences" />
+      <Card style={{ gap: 0, paddingVertical: Spacing.xs }}>
         {Platform.OS !== 'web' && (
           <>
-            <ThemedText type="label" themeColor="textSecondary" style={styles.section}>
-              Appearance
-            </ThemedText>
-            <Card>
-              <Segmented
-                value={themePref}
-                onChange={setThemePref}
-                options={[
-                  { value: 'system', label: 'Auto', icon: 'phone' },
-                  { value: 'light', label: 'Light', icon: 'sun' },
-                  { value: 'dark', label: 'Dark', icon: 'moon' },
-                ]}
-              />
-              <ThemedText type="small" themeColor="textSecondary" style={{ fontSize: 13 }}>
-                {themePref === 'system' ? 'Auto matches your phone.' : `The app always uses the ${themePref} theme.`}
-              </ThemedText>
-            </Card>
+            <ListRow leading={<Icon name="sun" color="textSecondary" />} title="Appearance" value={THEME_LABEL[themePref]} chevron onPress={() => open('appearance')} />
+            <Divider />
           </>
         )}
+        <ListRow leading={<Icon name="bell" color="textSecondary" />} title="Notifications" value={notifLabel} chevron onPress={onNotifications} />
+      </Card>
 
-        <ThemedText type="label" themeColor="textSecondary" style={styles.section}>
-          Help & feedback
-        </ThemedText>
-        <Card>
-          <View style={{ gap: 4, flex: 1 }}>
-            <ThemedText type="smallBold" style={{ fontSize: 17 }}>
-              Something to report?
-            </ThemedText>
-            <ThemedText type="small" themeColor="textSecondary">
-              Report a bug or suggest an improvement for PassTheBill.
-            </ThemedText>
-          </View>
-          <Button title="Send feedback" icon="info" variant="secondary" onPress={openFeedback} />
-        </Card>
+      <SectionHeader title="Team" />
+      <Card style={{ gap: 0, paddingVertical: Spacing.xs }}>
+        <ListRow leading={<Icon name="team" color="textSecondary" />} title={me.teams.name} chevron onPress={() => router.navigate('/team')} />
+      </Card>
 
-        <ThemedText type="label" themeColor="textSecondary" style={styles.section}>
-          Account
-        </ThemedText>
-        <Button title="Sign out" icon="signOut" variant="danger" onPress={signOut} />
-      </ScrollView>
+      <SectionHeader title="Help & feedback" />
+      <Card style={{ gap: 0, paddingVertical: Spacing.xs }}>
+        <ListRow
+          leading={<Icon name="info" color="textSecondary" />}
+          title="Send feedback"
+          chevron
+          onPress={() => {
+            setFeedbackType('bug');
+            open('feedback');
+          }}
+        />
+      </Card>
 
-      <Modal visible={editNameOpen} transparent animationType="slide" onRequestClose={() => !savingName && setEditNameOpen(false)}>
-        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' }}>
-          <View style={{ backgroundColor: theme.backgroundElement, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, paddingBottom: 32, gap: 16 }}>
-            <ThemedText type="subtitle">Edit your name</ThemedText>
-            <Input
-              label="Name"
-              value={name}
-              onChangeText={setName}
-              autoFocus
-              maxLength={60}
-              placeholder="Your name"
-              returnKeyType="done"
-              onSubmitEditing={saveName}
-            />
-            <Button title="Save name" icon="check" onPress={saveName} disabled={savingName} />
-            <Button title="Cancel" variant="secondary" onPress={() => setEditNameOpen(false)} disabled={savingName} />
-          </View>
-        </View>
-      </Modal>
+      <Button title="Sign out" icon="signOut" variant="danger" onPress={() => open('signout')} />
+      <ThemedText type="caption" themeColor="textSecondary" style={{ textAlign: 'center' }}>
+        {versionLine()}
+      </ThemedText>
 
-      <Modal visible={feedbackOpen} transparent animationType="slide" onRequestClose={() => !savingFeedback && setFeedbackOpen(false)}>
-        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' }}>
-          <View style={{ backgroundColor: theme.backgroundElement, borderTopLeftRadius: 28, borderTopRightRadius: 28, padding: 20, paddingBottom: 32, gap: 16 }}>
-            <View style={{ gap: 4 }}>
-              <ThemedText type="subtitle">Feedback</ThemedText>
-              <ThemedText type="small" themeColor="textSecondary">
-                Tell us about a problem or something you would like changed.
-              </ThemedText>
-            </View>
+      <BottomSheet
+        visible={sheet === 'profile'}
+        onClose={close}
+        title="Edit profile"
+        dismissible={!busy}
+        confirmDiscard={name.trim() !== me.name}
+        error={sheetError}
+        footer={<Button title="Save" loading={busy} onPress={saveName} />}>
+        <Input label="Name" value={name} onChangeText={(v) => { setName(v); setSheetError(null); }} autoFocus maxLength={60} returnKeyType="done" onSubmitEditing={saveName} />
+      </BottomSheet>
 
-            <View style={{ gap: 8 }}>
-              <ThemedText type="smallBold" style={{ fontSize: 14 }}>
-                Type
-              </ThemedText>
-              <View style={{ flexDirection: 'row', gap: 8 }}>
-                {(['bug', 'suggestion'] as FeedbackType[]).map((type) => {
-                  const selected = feedbackType === type;
-                  return (
-                    <Pressable
-                      key={type}
-                      onPress={() => setFeedbackType(type)}
-                      accessibilityRole="radio"
-                      accessibilityState={{ selected }}
-                      style={{
-                        flex: 1,
-                        minHeight: 48,
-                        borderRadius: 14,
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        backgroundColor: selected ? theme.primary : theme.backgroundSelected,
-                        borderWidth: 1,
-                        borderColor: selected ? theme.primary : theme.border,
-                      }}
-                    >
-                      <ThemedText type="smallBold" themeColor={selected ? 'onPrimary' : 'text'}>
-                        {type === 'bug' ? 'Bug report' : 'Suggestion'}
-                      </ThemedText>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
+      <BottomSheet visible={sheet === 'appearance'} onClose={close} title="Appearance">
+        {(['light', 'dark', 'system'] as ThemePref[]).map((p) => (
+          <ListRow
+            key={p}
+            title={THEME_LABEL[p]}
+            subtitle={p === 'system' ? 'Matches your phone' : undefined}
+            trailing={themePref === p ? <Icon name="check" color="primaryText" /> : undefined}
+            onPress={() => {
+              setThemePref(p);
+              close();
+            }}
+          />
+        ))}
+      </BottomSheet>
 
-            <Input
-              label={feedbackType === 'bug' ? 'What went wrong?' : 'What should we improve?'}
-              value={feedback}
-              onChangeText={setFeedback}
-              multiline
-              numberOfLines={5}
-              maxLength={2000}
-              textAlignVertical="top"
-              placeholder={feedbackType === 'bug' ? 'Describe the problem and what you were doing when it happened.' : 'Tell us about the change or feature you would like.'}
-              style={{ minHeight: 130 }}
-            />
+      <BottomSheet
+        visible={sheet === 'feedback'}
+        onClose={close}
+        title="Send feedback"
+        dismissible={!busy}
+        confirmDiscard={feedback.trim().length > 0}
+        error={sheetError}
+        footer={<Button title="Send" loading={busy} onPress={sendFeedback} />}>
+        <Segmented
+          value={feedbackType}
+          onChange={setFeedbackType}
+          options={[
+            { value: 'bug', label: 'Bug' },
+            { value: 'suggestion', label: 'Suggestion' },
+          ]}
+        />
+        <Input
+          label={feedbackType === 'bug' ? 'What went wrong?' : 'What would you like to see?'}
+          value={feedback}
+          onChangeText={(v) => { setFeedback(v); setSheetError(null); }}
+          multiline
+          numberOfLines={5}
+          maxLength={2000}
+          inputStyle={{ minHeight: 120, textAlignVertical: 'top' }}
+          hint={`${feedback.length}/2000`}
+        />
+      </BottomSheet>
 
-            <Button title={savingFeedback ? 'Sending...' : 'Send feedback'} icon="check" onPress={saveFeedback} disabled={savingFeedback} />
-            <Button title="Cancel" variant="secondary" onPress={() => setFeedbackOpen(false)} disabled={savingFeedback} />
-          </View>
-        </View>
-      </Modal>
-    </>
+      <BottomSheet
+        visible={sheet === 'signout'}
+        onClose={close}
+        title="Sign out?"
+        dismissible={!busy}
+        footer={
+          <>
+            <Button title="Sign out" variant="danger" loading={busy} onPress={signOut} />
+            <Button title="Cancel" variant="ghost" onPress={close} />
+          </>
+        }>
+        <ThemedText type="body">You can sign back in with Google any time.</ThemedText>
+      </BottomSheet>
+    </Screen>
   );
 }

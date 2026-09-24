@@ -1,5 +1,7 @@
 import { createContext, useContext } from 'react';
 
+import type { FriendlyError } from '@/lib/errors';
+
 export type Member = {
   id: string;
   name: string;
@@ -11,29 +13,22 @@ export type ThemePref = 'system' | 'light' | 'dark';
 
 export const Session = createContext<{
   member: Member | null;
-  reload: () => Promise<void>;
+  reload: () => Promise<{ error?: FriendlyError }>;
   finishOnboarding: () => void;
   themePref: ThemePref;
   setThemePref: (pref: ThemePref) => void;
 }>({
   member: null,
-  reload: async () => {},
+  reload: async () => ({}),
   finishOnboarding: () => {},
-  themePref: 'system',
+  themePref: 'light',
   setThemePref: () => {},
 });
 
 export const useSession = () => useContext(Session);
 
-export const CURRENCY = 'Rs';
+/** Light is the default; a stored 'system' is honoured explicitly. */
+export const restoreThemePref = (stored: string | null): ThemePref =>
+  stored === 'dark' || stored === 'system' ? stored : 'light';
 
-export const money = (n: number) => `${CURRENCY} ${Math.round(n).toLocaleString()}`;
-
-const pad = (n: number) => String(n).padStart(2, '0');
-
-export const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-
-export const niceDate = (s: string) => {
-  const [y, m, d] = s.slice(0, 10).split('-').map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
-};
+export { CURRENCY, money, shortDate as niceDate, ymd } from '@/lib/format';

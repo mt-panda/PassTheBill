@@ -65,13 +65,13 @@ export function AnimatedSplash({ ready, onDone }: { ready: boolean; onDone: () =
 
   useEffect(() => {
     if (!ready) return;
-    halves.set(withSpring(1, { damping: 15, stiffness: 110 }));
-    receipt.set(withDelay(380, withSpring(1, { damping: 10, stiffness: 150 })));
-    ring.set(withDelay(420, withTiming(1, { duration: 1000, easing: out })));
-    title.set(withDelay(600, withTiming(1, { duration: 550, easing: out })));
-    tagline.set(withDelay(800, withTiming(1, { duration: 550, easing: out })));
-    exit.set(withDelay(1850, withTiming(1, { duration: 420, easing: Easing.in(Easing.cubic) })));
-    const t = setTimeout(onDone, 2300);
+    halves.set(withSpring(1, { damping: 18, stiffness: 180 }));
+    receipt.set(withDelay(150, withSpring(1, { damping: 12, stiffness: 200 })));
+    ring.set(withDelay(150, withTiming(1, { duration: 500, easing: out })));
+    title.set(withDelay(250, withTiming(1, { duration: 350, easing: out })));
+    tagline.set(withDelay(350, withTiming(1, { duration: 350, easing: out })));
+    exit.set(withDelay(600, withTiming(1, { duration: 200, easing: Easing.in(Easing.cubic) })));
+    const t = setTimeout(onDone, 800);
     return () => clearTimeout(t);
   }, [ready]);
 

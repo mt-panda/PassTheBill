@@ -33,3 +33,7 @@ example
 /android
 
 *firebase-adminsdk*.json
+
+# superpowers skill working files (specs, plans, test notes)
+.superpowers/
+docs/superpowers/

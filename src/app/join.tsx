@@ -1,127 +1,147 @@
 import { useEffect, useState } from 'react';
-import { Alert, ScrollView, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Clipboard, Share, View } from 'react-native';
 
 import { LogoMark } from '@/components/splash';
 import { ThemedText } from '@/components/themed-text';
-import { Button, Card, Input, Segmented, styles } from '@/components/ui';
+import { BottomSheet, Button, Card, Input, Row, Screen } from '@/components/ui';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { friendlyError, reportError } from '@/lib/errors';
 import { useSession } from '@/lib/session';
 import { supabase } from '@/lib/supabase';
+
+export { RouteErrorBoundary as ErrorBoundary } from '@/components/ui';
 
 export default function JoinScreen() {
   const { reload } = useSession();
   const theme = useTheme();
-  const insets = useSafeAreaInsets();
-  const [mode, setMode] = useState<'join' | 'create'>('join');
+  const [creating, setCreating] = useState(false);
   const [name, setName] = useState('');
+  const [prefilling, setPrefilling] = useState(true);
   const [code, setCode] = useState('');
   const [teamName, setTeamName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [email, setEmail] = useState('');
+  const [ready, setReady] = useState<{ name: string; code: string } | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => {
       setEmail(user?.email ?? '');
       setName((n) => n || user?.user_metadata.full_name || user?.user_metadata.name || '');
+      setPrefilling(false);
     });
   }, []);
 
-  async function submit(fn: 'join_team' | 'create_team') {
-    if (!name.trim()) return Alert.alert('Enter your name first');
+  async function submit() {
+    if (!name.trim()) return setError('Enter your name first.');
     setBusy(true);
-    try {
-      const { error } =
-        fn === 'join_team'
-          ? await supabase.rpc(fn, { p_code: code, p_member_name: name })
-          : await supabase.rpc(fn, { p_team_name: teamName, p_member_name: name });
-      if (error) throw error;
-      await reload();
-    } catch (e) {
-      Alert.alert('Could not continue', (e as Error).message);
-    } finally {
+    setError(null);
+    const { data, error: e } = creating
+      ? await supabase.rpc('create_team', { p_team_name: teamName, p_member_name: name })
+      : await supabase.rpc('join_team', { p_code: code, p_member_name: name });
+    if (e) {
       setBusy(false);
+      reportError('join', e);
+      return setError(friendlyError(e).message);
     }
+    if (creating) {
+      // reload() would set the member and unmount this screen (and the sheet) — wait for Continue.
+      setBusy(false);
+      const t = data as { name: string; code: string };
+      return setReady({ name: t.name, code: t.code });
+    }
+    await reload();
   }
 
-  const joining = mode === 'join';
+  const value = creating ? teamName : code;
 
   return (
-    <ScrollView
-      contentContainerStyle={[styles.screen, { paddingTop: insets.top + 32, maxWidth: 520 }]}
-      keyboardShouldPersistTaps="handled">
-      <View style={{ gap: 12, marginBottom: 12 }}>
+    <Screen keyboard contentStyle={{ maxWidth: 520 }}>
+      <View style={{ gap: Spacing.md, marginTop: Spacing.xl }}>
         <LogoMark tile={theme.primary} ink={theme.onPrimary} />
-        <ThemedText type="subtitle" style={{ fontSize: 32, lineHeight: 38 }}>
-          PassTheBill
-        </ThemedText>
-        <ThemedText themeColor="textSecondary">
-          Split team lunch orders in seconds. Everyone taps what they ate, and the app works out who owes what.
-        </ThemedText>
+        <ThemedText type="screenTitle">{creating ? 'Start a new team' : 'Join a team'}</ThemedText>
       </View>
 
-      <ThemedText type="label" themeColor="textSecondary" style={styles.section}>
-        Step 1 · About you
-      </ThemedText>
       <Card>
         <Input
           label="Your name"
-          placeholder="e.g. Ali Khan"
+          placeholder={prefilling ? 'Loading…' : 'e.g. Ali Khan'}
           value={name}
-          onChangeText={setName}
+          onChangeText={(v) => { setName(v); setError(null); }}
           autoCapitalize="words"
+          maxLength={60}
           hint="This is how your teammates will see you."
         />
-      </Card>
-
-      <ThemedText type="label" themeColor="textSecondary" style={styles.section}>
-        Step 2 · Your team
-      </ThemedText>
-      <Segmented
-        value={mode}
-        onChange={setMode}
-        options={[
-          { value: 'join', label: 'I have a code' },
-          { value: 'create', label: 'Start a new team' },
-        ]}
-      />
-
-      <Card>
-        {joining ? (
-          <Input
-            key="code"
-            label="Team code"
-            placeholder="e.g. A1B2C3"
-            value={code}
-            onChangeText={setCode}
-            autoCapitalize="characters"
-            autoCorrect={false}
-            hint="Ask a teammate — it's shown at the top of their orders screen."
-          />
+        {creating ? (
+          <Input key="team" label="Team name" placeholder="e.g. Design Team" value={teamName} onChangeText={(v) => { setTeamName(v); setError(null); }} maxLength={60} />
         ) : (
           <Input
-            key="team"
-            label="Team name"
-            placeholder="e.g. Design Team"
-            value={teamName}
-            onChangeText={setTeamName}
-            hint="You'll get a code to share with your team."
+            key="code"
+            label="Enter your team code"
+            placeholder="ABC123"
+            value={code}
+            onChangeText={(v) => { setCode(v); setError(null); }}
+            autoCapitalize="characters"
+            autoCorrect={false}
+            maxLength={6}
+            inputStyle={{ fontSize: 22, letterSpacing: 3 }}
+            hint="Ask a teammate. It’s on their Team tab."
           />
         )}
-        <Button
-          title={busy ? 'Please wait…' : joining ? 'Join team' : 'Create team'}
-          icon={joining ? 'forward' : 'add'}
-          disabled={busy || !(joining ? code : teamName).trim()}
-          onPress={() => submit(joining ? 'join_team' : 'create_team')}
-        />
+        {error && (
+          <ThemedText type="small" themeColor="danger" accessibilityLiveRegion="polite">
+            {error}
+          </ThemedText>
+        )}
+        <Button title={creating ? 'Create team' : 'Join team'} loading={busy} disabled={!value.trim()} onPress={submit} />
       </Card>
 
       <Button
-        title={email ? `Not ${email}? Switch account` : 'Switch account'}
+        title={creating ? 'I have a team code' : 'or Start a new team'}
         variant="ghost"
-        small
-        onPress={() => supabase.auth.signOut()}
+        onPress={() => {
+          setError(null);
+          setCreating((c) => !c);
+        }}
       />
-    </ScrollView>
+      <Button title={email ? `Not ${email}? Switch account` : 'Switch account'} variant="ghost" size="sm" onPress={() => supabase.auth.signOut()} />
+
+      <BottomSheet
+        visible={!!ready}
+        onClose={() => {}}
+        dismissible={false}
+        title="Your team is ready"
+        footer={<Button title="Continue" onPress={() => void reload()} />}>
+        {ready && (
+          <>
+            <ThemedText type="sectionTitle">{ready.name}</ThemedText>
+            <ThemedText type="small" themeColor="textSecondary">
+              Share this code so teammates can join.
+            </ThemedText>
+            <ThemedText type="teamCode">{ready.code}</ThemedText>
+            <Row>
+              <Button
+                title={copied ? 'Copied ✓' : 'Copy'}
+                variant="secondary"
+                onPress={() => {
+                  Clipboard.setString(ready.code);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+                style={{ flex: 1 }}
+              />
+              <Button
+                title="Share"
+                variant="secondary"
+                onPress={() => Share.share({ message: `Join "${ready.name}" on PassTheBill with code ${ready.code}` })}
+                style={{ flex: 1 }}
+              />
+            </Row>
+          </>
+        )}
+      </BottomSheet>
+    </Screen>
   );
 }
