@@ -1,777 +1,456 @@
-import { Stack, router, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  ScrollView,
-  View,
-} from 'react-native';
+import { Stack, useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
+import { usePreventRemove } from 'expo-router/react-navigation';
+import { useEffect, useState } from 'react';
+import { BackHandler, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
 import {
+  BottomSheet,
   Button,
   Card,
   Divider,
-  IconButton,
+  EmptyState,
+  ErrorState,
+  FoodThumb,
+  Icon,
   Input,
+  ListRow,
+  QuantityStepper,
   Row,
-  Stepper,
-  styles,
+  Screen,
+  SectionHeader,
+  Skeleton,
+  useToast,
 } from '@/components/ui';
-import { CURRENCY, money, useSession, ymd } from '@/lib/session';
+import { Spacing } from '@/constants/theme';
+import { buildSuggestions, filterSuggestions, type Suggestion } from '@/features/orders/restaurants';
+import { useOrderDraft, type DraftItem } from '@/features/orders/use-order-draft';
+import { dayLabel, money, parseAmount, shortDate, ymd } from '@/lib/format';
 import { supabase } from '@/lib/supabase';
 
-type Draft = {
-  key: string;
-  id?: string;
-  name: string;
-  price: string;
-  qty: string;
-  image_url?: string | null;
-  image_loading?: boolean;
+export { RouteErrorBoundary as ErrorBoundary } from '@/components/ui';
+
+type Step = 'restaurant' | 'items' | 'review';
+
+const addDays = (n: number) => {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return ymd(d);
 };
-
-type ImageLookupResult = {
-  name: string;
-  search_query: string;
-  image_url: string | null;
-  image_page_url: string | null;
-  photographer: string | null;
-  photographer_url: string | null;
-  alt: string | null;
-  pexels_id: number | null;
-};
-
-const blank = (): Draft => ({
-  key: String(Math.random()),
-  name: '',
-  price: '',
-  qty: '1',
-  image_url: null,
-  image_loading: false,
-});
-
-const IMAGE_LOOKUP_DELAY = 5000;
 
 export default function OrderFormScreen() {
   const { id } = useLocalSearchParams<{ id?: string }>();
-  const member = useSession().member!;
+  const router = useRouter();
+  const navigation = useNavigation();
+  const toast = useToast();
+  const d = useOrderDraft(id);
 
-  const [title, setTitle] = useState('');
-  const [date, setDate] = useState(ymd(new Date()));
-  const [delivery, setDelivery] = useState('');
-  const [items, setItems] = useState<Draft[]>([blank()]);
-  const [originalIds, setOriginalIds] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-
-  const imageTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(
-    new Map(),
-  );
-
-  const imageRequestIds = useRef<Map<string, number>>(new Map());
-
-  const imageCache = useRef<Map<string, ImageLookupResult | null>>(
-    new Map(),
-  );
+  const [step, setStep] = useState<Step>(id ? 'items' : 'restaurant');
+  const [search, setSearch] = useState('');
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [editing, setEditing] = useState<{ key: string; original?: DraftItem } | null>(null);
+  const [itemError, setItemError] = useState<string | null>(null);
+  const [dateSheet, setDateSheet] = useState(false);
+  const [confirmRemoved, setConfirmRemoved] = useState<string[] | null>(null);
+  const [discard, setDiscard] = useState<null | (() => void)>(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<null | { go: () => void }>(null);
 
   useEffect(() => {
-    if (!id) return;
-
+    if (id) return;
     supabase
       .from('orders')
-      .select(
-        'title, ordered_on, delivery_charge, order_items(id, name, unit_price, qty, image_url)',
-      )
-      .eq('id', id)
-      .single()
-      .then(({ data, error }) => {
-        if (error) {
-          Alert.alert('Could not load order', error.message);
-          return;
-        }
-
-        setTitle(data.title);
-        setDate(data.ordered_on);
-        setDelivery(String(data.delivery_charge));
-
-        const rows = data.order_items as {
-          id: string;
-          name: string;
-          unit_price: number;
-          qty: number;
-          image_url: string | null;
-        }[];
-
-        setItems(
-          rows.map((item) => ({
-            key: item.id,
-            id: item.id,
-            name: item.name,
-            price: String(item.unit_price),
-            qty: String(item.qty),
-            image_url: item.image_url ?? null,
-            image_loading: false,
-          })),
-        );
-
-        setOriginalIds(rows.map((item) => item.id));
-      });
+      .select('title, ordered_on')
+      .neq('title', '')
+      .order('created_at', { ascending: false })
+      .limit(300)
+      .then(({ data }) => setSuggestions(buildSuggestions(data ?? [])));
   }, [id]);
 
+  // Unsaved-changes guard. The guard reads the last committed render, so navigation after a save
+  // happens in the effect below, once `saved` has turned the guard off.
+  usePreventRemove(d.dirty && !saved && !saving, ({ data }) => setDiscard(() => () => navigation.dispatch(data.action)));
   useEffect(() => {
-    return () => {
-      imageTimers.current.forEach((timer) => clearTimeout(timer));
-      imageTimers.current.clear();
-    };
-  }, []);
+    saved?.go();
+  }, [saved]);
 
-  const update = (key: string, patch: Partial<Draft>) =>
-    setItems((rows) =>
-      rows.map((row) =>
-        row.key === key ? { ...row, ...patch } : row,
-      ),
-    );
-
-  async function lookupImage(key: string, name: string) {
-    const cleanName = name.trim();
-
-    if (!cleanName) {
-      update(key, {
-        image_url: null,
-        image_loading: false,
-      });
-      return;
-    }
-
-    const requestId =
-      (imageRequestIds.current.get(key) ?? 0) + 1;
-
-    imageRequestIds.current.set(key, requestId);
-
-    const cached = imageCache.current.get(
-      cleanName.toLowerCase(),
-    );
-
-    if (cached !== undefined) {
-      update(key, {
-        image_url: cached?.image_url ?? null,
-        image_loading: false,
-      });
-      return;
-    }
-
-    update(key, {
-      image_loading: true,
+  // Android back steps back through the flow before leaving it.
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (step === 'review') return setStep('items'), true;
+      if (step === 'items' && !id) return setStep('restaurant'), true;
+      return false;
     });
+    return () => sub.remove();
+  }, [step, id]);
 
-    try {
-      const { data, error } = await supabase.functions.invoke(
-        'food-image',
-        {
-          body: {
-            items: [cleanName],
-          },
-        },
-      );
-
-      if (
-        imageRequestIds.current.get(key) !==
-        requestId
-      ) {
-        return;
-      }
-
-      if (error) {
-        console.warn('IMAGE FUNCTION ERROR:', error);
-        console.warn('IMAGE FUNCTION ERROR NAME:', error.name);
-        console.warn(
-          'IMAGE FUNCTION ERROR MESSAGE:',
-          error.message,
-        );
-        console.warn(
-          'IMAGE FUNCTION ERROR CONTEXT:',
-          error.context,
-        );
-
-        imageCache.current.set(
-          cleanName.toLowerCase(),
-          null,
-        );
-
-        update(key, {
-          image_url: null,
-          image_loading: false,
-        });
-
-        return;
-      }
-
-      const result =
-        data?.items?.[0] as ImageLookupResult | undefined;
-
-      const imageResult =
-        result && typeof result === 'object'
-          ? result
-          : null;
-
-      imageCache.current.set(
-        cleanName.toLowerCase(),
-        imageResult,
-      );
-
-      update(key, {
-        image_url: imageResult?.image_url ?? null,
-        image_loading: false,
-      });
-    } catch (error) {
-      if (
-        imageRequestIds.current.get(key) !==
-        requestId
-      ) {
-        return;
-      }
-
-      console.warn(
-        `Image lookup failed for "${cleanName}":`,
-        error,
-      );
-
-      imageCache.current.set(
-        cleanName.toLowerCase(),
-        null,
-      );
-
-      update(key, {
-        image_url: null,
-        image_loading: false,
-      });
-    }
+  function choose(title: string) {
+    d.setTitle(title);
+    setStep('items');
   }
 
-  function handleItemNameChange(
-    key: string,
-    name: string,
-  ) {
-    const existingTimer =
-      imageTimers.current.get(key);
+  function openItem(row?: DraftItem) {
+    setItemError(null);
+    if (row) setEditing({ key: row.key, original: row });
+    else setEditing({ key: d.addItem() });
+  }
 
-    if (existingTimer) {
-      clearTimeout(existingTimer);
+  function cancelItem() {
+    if (!editing) return;
+    if (editing.original) d.replaceItem(editing.original);
+    else d.removeItem(editing.key);
+    setEditing(null);
+  }
+
+  function saveItem(row: DraftItem) {
+    if (!row.name.trim()) return setItemError('Give the item a name.');
+    if (parseAmount(row.price) === null) return setItemError('Enter a price, like 450.');
+    d.lookupNow(row.key);
+    setEditing(null);
+    setError(null); // an edited item may fix what the last submit complained about
+  }
+
+  async function submit(confirmed = false) {
+    const invalid = d.validate();
+    if (invalid) return setError(invalid);
+    setError(null);
+    setSaving(true);
+    if (id && !confirmed) {
+      const check = await d.checkEdit();
+      const problem = check.error?.message ?? check.belowPicked;
+      if (problem || check.removedPicked.length) {
+        setSaving(false);
+        if (problem) return setError(problem);
+        return setConfirmRemoved(check.removedPicked);
+      }
     }
-
-    update(key, {
-      name,
-      image_url: null,
-      image_loading: false,
+    const result = await d.save();
+    if (result.error) {
+      setSaving(false);
+      return setError(result.error.message);
+    }
+    setSaved({
+      go: id
+        ? () => {
+            toast.show('Saved');
+            router.back();
+          }
+        : () => router.replace({ pathname: '/order-confirmed', params: { id: result.orderId! } }),
     });
-
-    const cleanName = name.trim();
-
-    if (!cleanName) {
-      imageRequestIds.current.set(
-        key,
-        (imageRequestIds.current.get(key) ?? 0) + 1,
-      );
-      return;
-    }
-
-    if (cleanName.length < 2) {
-      return;
-    }
-
-    const timer = setTimeout(() => {
-      imageTimers.current.delete(key);
-
-      lookupImage(key, cleanName);
-    }, IMAGE_LOOKUP_DELAY);
-
-    imageTimers.current.set(key, timer);
   }
 
-  function removeItem(key: string) {
-    const existingTimer =
-      imageTimers.current.get(key);
+  const title = id ? 'Edit lunch' : 'New lunch';
+  const editingRow = editing ? d.items.find((r) => r.key === editing.key) : undefined;
+  const lineTotal = (r: DraftItem) => (parseAmount(r.price) ?? 0) * r.qty;
+  const itemsTotal = d.items.reduce((s, r) => s + lineTotal(r), 0);
+  const deliveryFee = parseAmount(d.delivery) ?? 0;
+  const lookingUp = d.items.some((r) => r.loading);
 
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-      imageTimers.current.delete(key);
-    }
-
-    imageRequestIds.current.set(
-      key,
-      (imageRequestIds.current.get(key) ?? 0) + 1,
-    );
-
-    setItems((rows) =>
-      rows.filter((row) => row.key !== key),
+  if (!d.loaded) {
+    return (
+      <>
+        <Stack.Screen options={{ title }} />
+        <Screen nativeHeader>
+          {d.loadError ? (
+            <ErrorState message={d.loadError.message} onRetry={() => router.back()} />
+          ) : (
+            <>
+              <Skeleton height={28} width="60%" />
+              <Skeleton.Row />
+              <Skeleton.Row />
+            </>
+          )}
+        </Screen>
+      </>
     );
   }
 
-  async function save() {
-    const rows = items.filter(
-      (row) =>
-        row.name.trim() ||
-        row.price.trim(),
-    );
-
-    const deliveryCharge =
-      Number(delivery || 0);
-
-    const bad = rows.find(
-      (row) =>
-        !row.name.trim() ||
-        row.price.trim() === '' ||
-        !(Number(row.price) >= 0) ||
-        !Number.isInteger(Number(row.qty)) ||
-        Number(row.qty) < 1,
-    );
-
-    if (!rows.length) {
-      return Alert.alert('Add at least one item');
-    }
-
-    if (bad) {
-      return Alert.alert(
-        'Check your items',
-        'Every item needs a name, a price, and a whole-number quantity.',
-      );
-    }
-
-    if (!(deliveryCharge >= 0)) {
-      return Alert.alert(
-        'Delivery charge must be a number',
-      );
-    }
-
-    if (
-      !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
-      isNaN(Date.parse(date))
-    ) {
-      return Alert.alert(
-        'Date must be YYYY-MM-DD',
-      );
-    }
-
-    const order = {
-      title: title.trim(),
-      ordered_on: date,
-      delivery_charge: deliveryCharge,
-    };
-
-    const toRow = (row: Draft) => ({
-      name: row.name.trim(),
-      unit_price: Number(row.price),
-      qty: Number(row.qty),
-      image_url: row.image_url ?? null,
-    });
-
-    setBusy(true);
-
-    try {
-      if (!id) {
-        const { data, error } =
-          await supabase
-            .from('orders')
-            .insert({
-              ...order,
-              team_id: member.team_id,
-              created_by: member.id,
-            })
-            .select('id')
-            .single();
-
-        if (error) throw error;
-
-        const {
-          error: itemsError,
-        } = await supabase
-          .from('order_items')
-          .insert(
-            rows.map((row) => ({
-              ...toRow(row),
-              order_id: data.id,
-            })),
-          );
-
-        if (itemsError) {
-          await supabase
-            .from('orders')
-            .delete()
-            .eq('id', data.id);
-
-          throw itemsError;
-        }
-
-        router.replace({
-          pathname: '/order/[id]',
-          params: { id: data.id },
-        });
-
-        return;
-      }
-
-      const {
-        data: updated,
-        error,
-      } = await supabase
-        .from('orders')
-        .update(order)
-        .eq('id', id)
-        .select('id');
-
-      if (error) throw error;
-
-      if (!updated.length) {
-        throw new Error(
-          'This order is closed and can no longer be edited.',
-        );
-      }
-
-      for (const row of rows.filter(
-        (item) => item.id,
-      )) {
-        const { error } =
-          await supabase
-            .from('order_items')
-            .update(toRow(row))
-            .eq('id', row.id!);
-
-        if (error) {
-          throw new Error(
-            `${row.name}: ${error.message}`,
-          );
-        }
-      }
-
-      const added = rows
-        .filter((row) => !row.id)
-        .map((row) => ({
-          ...toRow(row),
-          order_id: id,
-        }));
-
-      if (added.length) {
-        const { error } =
-          await supabase
-            .from('order_items')
-            .insert(added);
-
-        if (error) throw error;
-      }
-
-      const removed = originalIds.filter(
-        (originalId) =>
-          !rows.some(
-            (row) => row.id === originalId,
-          ),
-      );
-
-      if (removed.length) {
-        const { error } =
-          await supabase
-            .from('order_items')
-            .delete()
-            .in('id', removed);
-
-        if (error) throw error;
-      }
-
-      router.back();
-    } catch (e) {
-      Alert.alert(
-        'Could not save',
-        (e as Error).message,
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const lineTotal = (row: Draft) =>
-    (Number(row.price) || 0) *
-    (Number(row.qty) || 0);
-
-  const itemsTotal = items.reduce(
-    (sum, row) =>
-      sum + lineTotal(row),
-    0,
-  );
-
-  const deliveryTotal =
-    Number(delivery) || 0;
+  const { useTyped, list } = filterSuggestions(suggestions, search);
+  const dateOptions = [...new Set([d.date, ...Array.from({ length: 91 }, (_, i) => addDays(30 - i))])].sort().reverse();
+  const today = addDays(0);
+  const tomorrow = addDays(1);
 
   return (
     <>
-      <Stack.Screen
-        options={{
-          title: id
-            ? 'Edit order'
-            : 'New order',
-        }}
-      />
+      <Stack.Screen options={{ title }} />
 
-      <ScrollView
-        contentContainerStyle={styles.screen}
-        contentInsetAdjustmentBehavior="automatic"
-        keyboardShouldPersistTaps="handled"
-      >
-        <ThemedText
-          type="label"
-          themeColor="textSecondary"
-          style={styles.section}
-        >
-          Order details
-        </ThemedText>
-
-        <Card>
+      {step === 'restaurant' && (
+        <Screen nativeHeader keyboard>
+          <ThemedText type="screenTitle">What are we ordering?</ThemedText>
           <Input
-            label="Where from?"
-            placeholder="e.g. KFC (optional)"
-            value={title}
-            onChangeText={setTitle}
+            placeholder="Search or type a restaurant…"
+            value={search}
+            onChangeText={setSearch}
+            maxLength={80}
+            autoCorrect={false}
+            autoCapitalize="words"
+            autoFocus={!id}
+            returnKeyType="next"
+            onSubmitEditing={() => search.trim() && choose(useTyped ?? search.trim())}
+            accessibilityLabel="Restaurant"
           />
-
-          <Row
-            style={{
-              alignItems: 'flex-start',
-            }}
-          >
-            <Input
-              style={{ flex: 1 }}
-              label="Date"
-              placeholder="YYYY-MM-DD"
-              value={date}
-              onChangeText={setDate}
-            />
-
-            <Input
-              style={{ flex: 1 }}
-              label={`Delivery fee (${CURRENCY})`}
-              placeholder="0"
-              value={delivery}
-              onChangeText={setDelivery}
-              keyboardType="decimal-pad"
-            />
-          </Row>
-
-          <ThemedText
-            type="small"
-            themeColor="textSecondary"
-            style={{ fontSize: 13 }}
-          >
-            The delivery fee is split evenly
-            between everyone who claims an item.
-          </ThemedText>
-        </Card>
-
-        <ThemedText
-          type="label"
-          themeColor="textSecondary"
-          style={styles.section}
-        >
-          What was ordered
-        </ThemedText>
-
-        {items.map((row, index) => (
-          <Card key={row.key}>
-            <Row>
-              <ThemedText type="smallBold">
-                Item {index + 1}
-              </ThemedText>
-
-              <IconButton
-                icon="close"
-                label={`Remove item ${
-                  index + 1
-                }`}
-                onPress={() =>
-                  removeItem(row.key)
-                }
-              />
-            </Row>
-
-            <View
-              style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                gap: 10,
-                marginTop: 4,
-                marginBottom: 12,
-              }}
-            >
-              {row.image_loading ? (
-                <View
-                  style={{
-                    width: 64,
-                    height: 64,
-                    borderRadius: 10,
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: 'rgba(127,127,127,0.08)',
-                  }}
-                >
-                  <ActivityIndicator />
-                </View>
-              ) : row.image_url ? (
-                <Image
-                  source={{
-                    uri: row.image_url,
-                  }}
-                  style={{
-                    width: 64,
-                    height: 64,
-                    borderRadius: 10,
-                  }}
-                  resizeMode="cover"
-                />
-              ) : null}
-
-              <View style={{ flex: 1 }}>
-                <Input
-                  placeholder="e.g. Zinger burger"
-                  value={row.name}
-                  onChangeText={(name) =>
-                    handleItemNameChange(
-                      row.key,
-                      name,
-                    )
-                  }
-                />
-              </View>
-            </View>
-
-            <Row
-              style={{
-                alignItems: 'flex-start',
-              }}
-            >
-              <Input
-                style={{ flex: 1 }}
-                label={`Price each (${CURRENCY})`}
-                placeholder="0"
-                value={row.price}
-                onChangeText={(price) =>
-                  update(row.key, {
-                    price,
-                  })
-                }
-                keyboardType="decimal-pad"
-              />
-
-              <View
-                style={{
-                  width: 150,
-                }}
-              >
-                <Stepper
-                  label="How many"
-                  value={
-                    Number(row.qty) || 1
-                  }
-                  onChange={(n) =>
-                    update(row.key, {
-                      qty: String(n),
-                    })
-                  }
-                />
-              </View>
-            </Row>
-
-            {lineTotal(row) > 0 && (
-              <ThemedText
-                type="small"
-                themeColor="textSecondary"
-                style={{
-                  textAlign: 'right',
-                }}
-              >
-                {money(lineTotal(row))}
-              </ThemedText>
-            )}
-          </Card>
-        ))}
-
-        <Button
-          title="Add another item"
-          icon="add"
-          variant="secondary"
-          onPress={() =>
-            setItems((rows) => [
-              ...rows,
-              blank(),
-            ])
-          }
-        />
-
-        <Card
-          style={{
-            marginTop: 8,
-          }}
-        >
-          <Row>
-            <ThemedText
-              type="small"
-              themeColor="textSecondary"
-            >
-              Items
-            </ThemedText>
-
-            <ThemedText type="small">
-              {money(itemsTotal)}
-            </ThemedText>
-          </Row>
-
-          <Row>
-            <ThemedText
-              type="small"
-              themeColor="textSecondary"
-            >
-              Delivery
-            </ThemedText>
-
-            <ThemedText type="small">
-              {money(deliveryTotal)}
-            </ThemedText>
-          </Row>
-
-          <Divider />
-
-          <Row>
-            <ThemedText type="smallBold">
-              Total bill
-            </ThemedText>
-
-            <ThemedText
-              type="subtitle"
-              style={{
-                fontSize: 22,
-                fontVariant: [
-                  'tabular-nums',
-                ],
-              }}
-            >
-              {money(
-                itemsTotal +
-                  deliveryTotal,
+          {(useTyped || list.length > 0) && (
+            <Card style={{ gap: 0, paddingVertical: Spacing.xs }}>
+              {useTyped && (
+                <ListRow title={`Use “${useTyped}”`} leading={<Icon name="add" color="primaryText" />} onPress={() => choose(useTyped)} />
               )}
+              {list.map((s) => (
+                <ListRow
+                  key={s.title}
+                  title={s.title}
+                  subtitle={`Last ordered ${dayLabel(s.lastOrderedOn)}`}
+                  leading={<Icon name="food" color="textSecondary" />}
+                  chevron
+                  onPress={() => choose(s.title)}
+                />
+              ))}
+            </Card>
+          )}
+          {!useTyped && list.length === 0 && (
+            <ThemedText type="small" themeColor="textSecondary">
+              Type a restaurant name to start.
             </ThemedText>
-          </Row>
-        </Card>
+          )}
+          <Button title={id ? 'Keep current name' : 'Skip'} variant="ghost" onPress={() => (id ? setStep('items') : choose(''))} />
+        </Screen>
+      )}
 
-        <Button
-          title={
-            busy
-              ? 'Saving…'
-              : id
-                ? 'Save changes'
-                : 'Create order'
-          }
-          icon="check"
-          disabled={busy}
-          onPress={save}
-        />
-      </ScrollView>
+      {step === 'items' && (
+        <Screen
+          nativeHeader
+          footer={
+            <>
+              {error && (
+                <ThemedText type="small" themeColor="danger" accessibilityLiveRegion="polite">
+                  {error}
+                </ThemedText>
+              )}
+              <Button
+                title="Continue"
+                disabled={!d.items.length}
+                onPress={() => {
+                  const invalid = d.validate();
+                  if (invalid) return setError(invalid);
+                  setError(null);
+                  setStep('review');
+                }}
+              />
+            </>
+          }>
+          <ListRow
+            title={d.title || 'Lunch'}
+            subtitle="Restaurant · tap to change"
+            leading={<Icon name="food" color="primaryText" />}
+            onPress={() => setStep('restaurant')}
+          />
+          <ThemedText type="screenTitle">What are we having?</ThemedText>
+          {d.items.length === 0 ? (
+            <EmptyState icon="food" title="No items yet" text="Add what the team is ordering." />
+          ) : (
+            <Card style={{ gap: 0, paddingVertical: Spacing.xs }}>
+              {d.items.map((r, i) => (
+                <View key={r.key}>
+                  {i > 0 && <Divider />}
+                  <ListRow
+                    leading={<FoodThumb uri={r.url} loading={r.loading} />}
+                    title={r.name || 'Unnamed item'}
+                    subtitle={`${money(parseAmount(r.price) ?? 0)} × ${r.qty}`}
+                    value={money(lineTotal(r))}
+                    onPress={() => openItem(r)}
+                  />
+                </View>
+              ))}
+            </Card>
+          )}
+          <Button title="Add item" icon="add" variant="secondary" onPress={() => openItem()} />
+        </Screen>
+      )}
+
+      {step === 'review' && (
+        <Screen
+          nativeHeader
+          keyboard
+          footer={
+            <>
+              {error && (
+                <ThemedText type="small" themeColor="danger" accessibilityLiveRegion="polite">
+                  {error}
+                </ThemedText>
+              )}
+              {saving && lookingUp && (
+                <ThemedText type="small" themeColor="textSecondary">
+                  Finding pictures…
+                </ThemedText>
+              )}
+              <Button title={id ? 'Save changes' : 'Create order'} loading={saving} onPress={() => submit()} />
+            </>
+          }>
+          <ListRow
+            title={d.title || 'Lunch'}
+            subtitle="Restaurant · tap to change"
+            leading={<Icon name="food" color="primaryText" />}
+            onPress={() => setStep('restaurant')}
+          />
+          <SectionHeader title="When" />
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: Spacing.sm }}>
+            <Button title="Today" size="sm" variant={d.date === today ? 'secondary' : 'ghost'} icon={d.date === today ? 'check' : undefined} onPress={() => d.setDate(today)} />
+            <Button title="Tomorrow" size="sm" variant={d.date === tomorrow ? 'secondary' : 'ghost'} icon={d.date === tomorrow ? 'check' : undefined} onPress={() => d.setDate(tomorrow)} />
+            <Button
+              title={d.date !== today && d.date !== tomorrow ? shortDate(d.date) : 'Other…'}
+              size="sm"
+              variant={d.date !== today && d.date !== tomorrow ? 'secondary' : 'ghost'}
+              icon="calendar"
+              onPress={() => setDateSheet(true)}
+            />
+          </View>
+          <Input
+            label="Delivery fee (Rs)"
+            placeholder="0"
+            keyboardType="decimal-pad"
+            value={d.delivery}
+            onChangeText={d.setDelivery}
+            hint="Split evenly between everyone who picks something."
+          />
+          <SectionHeader title="Items" />
+          <Card style={{ gap: Spacing.sm }}>
+            {d.items.map((r) => (
+              <Row key={r.key}>
+                <ThemedText type="body" numberOfLines={1} style={{ flexShrink: 1 }}>
+                  {r.name} × {r.qty}
+                </ThemedText>
+                <ThemedText type="amount">{money(lineTotal(r))}</ThemedText>
+              </Row>
+            ))}
+            {deliveryFee > 0 && (
+              <Row>
+                <ThemedText type="body" themeColor="textSecondary">Delivery</ThemedText>
+                <ThemedText type="amount">{money(deliveryFee)}</ThemedText>
+              </Row>
+            )}
+            <Divider />
+            <Row>
+              <ThemedText type="bodyStrong">Total bill</ThemedText>
+              <ThemedText type="amount">{money(itemsTotal + deliveryFee)}</ThemedText>
+            </Row>
+          </Card>
+        </Screen>
+      )}
+
+      {/* Item editor */}
+      <BottomSheet
+        visible={!!editingRow}
+        onClose={cancelItem}
+        title={editing?.original ? 'Edit item' : 'Add item'}
+        error={itemError}
+        footer={
+          editingRow && (
+            <>
+              <Button title="Save item" onPress={() => saveItem(editingRow)} />
+              {editing?.original && (
+                <Button
+                  title="Remove item"
+                  variant="danger"
+                  onPress={() => {
+                    d.removeItem(editingRow.key);
+                    setEditing(null);
+                    setError(null);
+                  }}
+                />
+              )}
+            </>
+          )
+        }>
+        {editingRow && (
+          <>
+            <Row style={{ justifyContent: 'flex-start' }}>
+              <FoodThumb uri={editingRow.url} loading={editingRow.loading} />
+              <ThemedText type="small" themeColor="textSecondary" style={{ flexShrink: 1 }}>
+                We find a picture from the name.
+              </ThemedText>
+            </Row>
+            <Input label="Name" value={editingRow.name} onChangeText={(v) => { d.setItemName(editingRow.key, v); setItemError(null); }} autoFocus autoCorrect={false} autoCapitalize="words" placeholder="e.g. Zinger Burger" />
+            <Input
+              label="Price (Rs)"
+              value={editingRow.price}
+              onChangeText={(v) => { d.update(editingRow.key, { price: v }); setItemError(null); }}
+              keyboardType="decimal-pad"
+              placeholder="0"
+            />
+            <Row>
+              <ThemedText type="bodyStrong">Quantity</ThemedText>
+              <QuantityStepper value={editingRow.qty} min={1} onChange={(v) => d.update(editingRow.key, { qty: v })} itemName={editingRow.name || 'item'} />
+            </Row>
+          </>
+        )}
+      </BottomSheet>
+
+      {/* Date list */}
+      <BottomSheet visible={dateSheet} onClose={() => setDateSheet(false)} title="Pick a date">
+        {dateOptions.map((day) => (
+          <ListRow
+            key={day}
+            title={dayLabel(day)}
+            subtitle={day === d.date ? 'Selected' : undefined}
+            trailing={day === d.date ? <Icon name="check" color="primaryText" /> : undefined}
+            onPress={() => {
+              d.setDate(day);
+              setDateSheet(false);
+            }}
+          />
+        ))}
+      </BottomSheet>
+
+      {/* Removing items teammates picked */}
+      <BottomSheet
+        visible={!!confirmRemoved}
+        onClose={() => setConfirmRemoved(null)}
+        title="Remove picked items?"
+        footer={
+          <>
+            <Button
+              title="Remove anyway"
+              variant="danger"
+              onPress={() => {
+                setConfirmRemoved(null);
+                submit(true);
+              }}
+            />
+            <Button title="Keep them" variant="ghost" onPress={() => setConfirmRemoved(null)} />
+          </>
+        }>
+        {confirmRemoved?.map((line) => (
+          <ThemedText key={line} type="body">
+            {line}.
+          </ThemedText>
+        ))}
+        <ThemedText type="small" themeColor="textSecondary">
+          Those picks will be removed.
+        </ThemedText>
+      </BottomSheet>
+
+      {/* Leaving with unsaved changes */}
+      <BottomSheet
+        visible={!!discard}
+        onClose={() => setDiscard(null)}
+        title={id ? 'Discard your changes?' : 'Discard this lunch?'}
+        footer={
+          <>
+            <Button
+              title="Discard"
+              variant="danger"
+              onPress={() => {
+                const leave = discard;
+                setDiscard(null);
+                leave?.();
+              }}
+            />
+            <Button title="Keep editing" variant="ghost" onPress={() => setDiscard(null)} />
+          </>
+        }>
+        <ThemedText type="body">What you’ve entered won’t be saved.</ThemedText>
+      </BottomSheet>
     </>
   );
 }
+

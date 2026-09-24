@@ -1,13 +1,17 @@
 import { useState } from 'react';
-import { Alert, ScrollView, View } from 'react-native';
+import { Alert, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Path } from 'react-native-svg';
 
 import { LogoMark } from '@/components/splash';
 import { ThemedText } from '@/components/themed-text';
-import { Button, IconButton, styles } from '@/components/ui';
+import { Button, IconButton, Screen } from '@/components/ui';
+import { Spacing } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { friendlyError, reportError } from '@/lib/errors';
 import { signInWithGoogle, supabase } from '@/lib/supabase';
+
+export { RouteErrorBoundary as ErrorBoundary } from '@/components/ui';
 
 const devAccounts = (__DEV__ ? (process.env.EXPO_PUBLIC_DEV_LOGINS ?? '') : '')
   .split(',')
@@ -54,13 +58,16 @@ export default function SignInScreen() {
   const theme = useTheme();
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function signIn() {
     setBusy(true);
+    setError(null);
     try {
       await signInWithGoogle();
     } catch (e) {
-      Alert.alert('Could not sign in', (e as Error).message);
+      reportError('sign-in', e);
+      setError(friendlyError(e).message);
     } finally {
       setBusy(false);
     }
@@ -68,8 +75,8 @@ export default function SignInScreen() {
 
   async function devSignIn(account: { email: string; password: string }) {
     setBusy(true);
-    const { error } = await supabase.auth.signInWithPassword(account);
-    if (error) Alert.alert('Dev login failed', error.message);
+    const { error: e } = await supabase.auth.signInWithPassword(account);
+    if (e) Alert.alert('Dev login failed', e.message);
     setBusy(false);
   }
 
@@ -82,28 +89,32 @@ export default function SignInScreen() {
   }
 
   return (
-    <>
-      <ScrollView contentContainerStyle={[styles.screen, { paddingTop: insets.top + 32, maxWidth: 520 }]}>
-        <View style={{ gap: 12, marginBottom: 12 }}>
-          <LogoMark tile={theme.primary} ink={theme.onPrimary} />
-          <ThemedText type="subtitle" style={{ fontSize: 32, lineHeight: 38 }}>
-            PassTheBill
-          </ThemedText>
-          <ThemedText themeColor="textSecondary">
-            Split team lunch orders in seconds. Everyone taps what they ate, and the app works out who owes what.
-          </ThemedText>
-        </View>
-
-        <Button title={busy ? 'Opening Google…' : 'Continue with Google'} left={<GoogleMark />} disabled={busy} onPress={signIn} />
-        <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
-          No password needed. New here? This creates your account.
+    <Screen scroll={false} contentStyle={{ justifyContent: 'center', maxWidth: 520 }}>
+      <View style={{ gap: Spacing.md }}>
+        <LogoMark tile={theme.primary} ink={theme.onPrimary} />
+        <ThemedText type="screenTitle" style={{ fontSize: 34, lineHeight: 40 }}>
+          PassTheBill
         </ThemedText>
-      </ScrollView>
+        <ThemedText type="body" themeColor="textSecondary">
+          Lunch made simple.
+        </ThemedText>
+      </View>
+      <View style={{ gap: Spacing.sm, marginTop: Spacing.xxl }}>
+        <Button title="Continue with Google" left={<GoogleMark />} loading={busy} onPress={signIn} />
+        {error && (
+          <ThemedText type="small" themeColor="danger" style={{ textAlign: 'center' }} accessibilityLiveRegion="polite">
+            {error}
+          </ThemedText>
+        )}
+        <ThemedText type="small" themeColor="textSecondary" style={{ textAlign: 'center' }}>
+          New here? This creates your account.
+        </ThemedText>
+      </View>
       {devAccounts.length > 0 && (
         <View style={{ position: 'absolute', top: insets.top + 12, right: 16 }}>
           <IconButton icon="dev" label="Developer login" disabled={busy} onPress={pickDevAccount} />
         </View>
       )}
-    </>
+    </Screen>
   );
 }

@@ -40,8 +40,8 @@ One person enters the order. Everyone taps what they ate. The app splits the del
 - **Live updates.** Claims and new orders show up on everyone's phone instantly.
 - **Push notifications.** Teammates get a notification when a new order is posted, even if the app is closed. Tapping it opens the order.
 - **Close to freeze.** An order can only be closed once every unit is claimed. After that, prices and claims are locked.
-- **Monthly totals.** See each person's food and delivery totals for any month, and mark people as paid.
-- **Light and dark themes.** Follows the phone's setting, or can be pinned in Settings.
+- **Lunch reviews.** My Lunches shows your running total. Anyone can start a review: everyone confirms their total, then the starter finishes it. Past reviews stay browsable.
+- **Light and dark themes.** Light by default; switch to dark or follow the phone in Settings.
 - **Over-the-air updates.** Normal JavaScript, UI, and asset changes can be published through EAS Update without reinstalling the app. Native changes still require a new build.
 
 ## How the money works
@@ -76,17 +76,20 @@ Money rules live in Postgres, not in the app, so a bug or a modified client can'
 src/
 ├── app/                     # Screens (file-based routes)
 │   ├── _layout.tsx          # Session loading, route guards, theme, push setup
-│   ├── (tabs)/              # Bottom tabs: Orders, Totals, + New order, Settings
+│   ├── (tabs)/              # Bottom tabs: Orders, Spending (My Lunches), Team, Settings
 │   ├── onboarding.tsx       # First-launch intro
 │   ├── sign-in.tsx          # "Continue with Google"
 │   ├── auth-callback.tsx    # Finishes Google sign-in when Android routes the redirect here
 │   ├── join.tsx             # Join a team by code, or create one
 │   ├── (tabs)/index.tsx     # Team orders
-│   ├── order/[id].tsx       # Order detail: claim, per-person summary, extra charges, close
-│   ├── order-form.tsx       # New / edit order
-│   ├── (tabs)/totals.tsx    # Monthly totals and settle-up
-│   └── (tabs)/settings.tsx  # Profile, theme, sign out
-├── components/              # UI kit (buttons, cards, inputs, badges), splash
+│   ├── order/[id].tsx       # Order detail: pick items, your share, order options (delivery, extra charges, close, delete)
+│   ├── order-form.tsx       # New / edit order: restaurant, items, review
+│   ├── order-confirmed.tsx  # Shown to the creator after creating an order
+│   ├── (tabs)/totals.tsx    # My Lunches: running total, reviews (start, confirm, finish), past reviews
+│   ├── (tabs)/team.tsx      # Members, team code, invite, switch or start a team
+│   └── (tabs)/settings.tsx  # Profile, appearance, notifications, feedback, sign out
+├── components/ui/           # UI kit (buttons, cards, inputs, badges, bottom sheet, toast)
+├── features/                # Order and billing hooks (orders/, billing/)
 ├── constants/theme.ts       # Colours, fonts, spacing
 ├── hooks/                   # Colour scheme and theme hooks
 └── lib/
@@ -97,7 +100,11 @@ supabase/
 ├── schema.sql               # Tables, RLS, triggers, RPCs, totals views
 ├── push.sql                 # Push token table and new-order notification trigger
 ├── extras.sql               # Delivery exclusions, extra charges, charge notifications
-└── check.sql                # Self-test for the money rules (rolls itself back)
+├── check.sql                # Self-test for the money rules (rolls itself back)
+├── redesign-additive.sql    # save_order, adopt_order, unregister_push_token and related fixes
+├── redesign-release.sql     # Team-switch guard, create_team fix, review totals view, push copy
+├── redesign-rollback.sql    # Restores the pre-redesign functions, policy and view
+└── notification-channel-v2.sql # Per-token Android channel so the custom sound plays
 .github/workflows/
 └── deploy.yml               # Publishes OTA updates; production builds are only needed for native changes
 ```
@@ -138,7 +145,10 @@ In the Supabase SQL editor, run these in order:
 1. [`supabase/schema.sql`](supabase/schema.sql): tables, security rules and totals.
 2. [`supabase/push.sql`](supabase/push.sql): push notification tokens and the new-order trigger.
 3. [`supabase/extras.sql`](supabase/extras.sql): delivery exclusions, extra charges, and their notifications.
-4. [`supabase/check.sql`](supabase/check.sql): should end with the notice `check passed`. It rolls back, leaving no data.
+4. [`supabase/notification-sound.sql`](supabase/notification-sound.sql), then [`supabase/redesign-additive.sql`](supabase/redesign-additive.sql), [`supabase/redesign-release.sql`](supabase/redesign-release.sql) and [`supabase/notification-channel-v2.sql`](supabase/notification-channel-v2.sql).
+5. [`supabase/check.sql`](supabase/check.sql): should end with the notice `check passed`. It rolls back, leaving no data.
+
+The order form looks up food pictures through the `food-image` Edge Function.
 
 ### 4. Google sign-in
 
@@ -184,6 +194,8 @@ Push doesn't work in Expo Go on Android. Use a build from EAS (see below).
    # → Set up … → Upload a new service account key
    ```
 4. Run `supabase/push.sql` and `supabase/extras.sql` if you haven't already.
+
+**Notification sound.** `assets/sounds/ptb_notification.wav` is bundled through the `expo-notifications` plugin in `app.json`, so it needs a native build (android `versionCode` 2 or later). Android fixes a channel's sound when the channel is created, so those builds create a `pass-the-bill-v2` channel and register their token for it; older builds keep `pass-the-bill` and the default sound. `supabase/notification-channel-v2.sql` makes `send_push` use each token's channel.
 
 When an order is inserted, Postgres calls the Expo Push API directly, so no Edge Function is needed. Every teammate except the orderer gets a notification. To debug deliveries:
 

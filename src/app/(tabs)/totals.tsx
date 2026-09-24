@@ -1,388 +1,333 @@
-import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { Alert, Modal, Pressable, ScrollView, View } from 'react-native';
+import { useRouter } from 'expo-router';
+import { useState } from 'react';
+import { View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Avatar, Badge, Button, Card, Icon, Row, styles } from '@/components/ui';
-import { useTheme } from '@/hooks/use-theme';
-import { money, niceDate, useSession } from '@/lib/session';
-import { supabase, useLive } from '@/lib/supabase';
+import {
+  BottomSheet,
+  Button,
+  Card,
+  Divider,
+  EmptyState,
+  ErrorState,
+  ListRow,
+  Row,
+  Screen,
+  SectionHeader,
+  Skeleton,
+  StatusBadge,
+  useToast,
+} from '@/components/ui';
+import { Spacing } from '@/constants/theme';
+import { useBilling, type Cycle, type Lunch, type TeamRow } from '@/features/billing/use-billing';
+import { normalizeTitle } from '@/features/orders/restaurants';
+import type { FriendlyError } from '@/lib/errors';
+import { dayLabel, money, rangeLabel, splitRound } from '@/lib/format';
 
-type Cycle = {
-  id: string;
-  triggered_by: string;
-  status: 'open' | 'closed';
-  created_at: string;
-  closed_at: string | null;
+export { RouteErrorBoundary as ErrorBoundary } from '@/components/ui';
+
+type Sheet =
+  | null
+  | { kind: 'review' }
+  | { kind: 'finish' }
+  | { kind: 'everyone'; title: string; rows: TeamRow[]; back?: { kind: 'past'; cycle: Cycle } }
+  | { kind: 'past'; cycle: Cycle };
+
+/** Restaurant rows: my amounts grouped by normalised title. */
+function byRestaurant(lunches: Lunch[]) {
+  const groups = new Map<string, { title: string; count: number; amount: number }>();
+  for (const l of lunches) {
+    const key = normalizeTitle(l.title) || 'lunch';
+    const g = groups.get(key) ?? { title: l.title.trim() || 'Lunch', count: 0, amount: 0 };
+    g.count++;
+    g.amount += l.amount;
+    groups.set(key, g);
+  }
+  return [...groups.values()].sort((a, b) => b.amount - a.amount);
+}
+
+const periodLabel = (lunches: { ordered_on: string }[], fallback: string) => {
+  if (!lunches.length) return rangeLabel(fallback);
+  const days = lunches.map((l) => l.ordered_on).sort();
+  return rangeLabel(days[0], days[days.length - 1]);
 };
 
-type Total = {
-  cycle_id: string;
-  member_id: string;
-  member_name: string;
-  items_total: number;
-  delivery_total: number;
-  extras_total: number;
-  grand_total: number;
-  confirmed_at: string | null;
-};
-
-export default function TotalsScreen() {
-  const { member } = useSession();
-  const me = member!;
-  const theme = useTheme();
-
-  const [cycle, setCycle] = useState<Cycle | null>(null);
-  const [totals, setTotals] = useState<Total[]>([]);
-  const [history, setHistory] = useState<Cycle[]>([]);
-  const [historyTotals, setHistoryTotals] = useState<Record<string, Total[]>>({});
-  const [selectedHistory, setSelectedHistory] = useState<Cycle | null>(null);
-  const [openOrders, setOpenOrders] = useState(0);
-  const [closedWaiting, setClosedWaiting] = useState(0);
+export default function MyLunchesScreen() {
+  const router = useRouter();
+  const toast = useToast();
+  const b = useBilling();
+  const [sheet, setSheet] = useState<Sheet>(null);
   const [busy, setBusy] = useState(false);
+  const [sheetError, setSheetError] = useState<string | null>(null);
 
-  async function load() {
-    const [active, open, waiting, closed] = await Promise.all([
-      supabase
-        .from('billing_cycles')
-        .select('id, triggered_by, status, created_at, closed_at')
-        .eq('status', 'open')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle(),
-      supabase.from('orders').select('id', { count: 'exact', head: true }).eq('status', 'open'),
-      supabase.from('untallied_closed_orders').select('id', { count: 'exact', head: true }),
-      supabase
-        .from('billing_cycles')
-        .select('id, triggered_by, status, created_at, closed_at')
-        .eq('status', 'closed')
-        .order('closed_at', { ascending: false })
-        .limit(20),
-    ]);
-
-    const error = active.error ?? open.error ?? waiting.error ?? closed.error;
-    if (error) return Alert.alert('Could not load tally', error.message);
-
-    const activeCycle = (active.data as Cycle | null) ?? null;
-    setCycle(activeCycle);
-    setOpenOrders(open.count ?? 0);
-    setClosedWaiting(waiting.count ?? 0);
-    setHistory((closed.data as Cycle[]) ?? []);
-
-    if (activeCycle) {
-      const t = await supabase
-        .from('billing_cycle_member_totals')
-        .select('*')
-        .eq('cycle_id', activeCycle.id)
-        .order('member_name');
-
-      if (t.error) return Alert.alert('Could not load totals', t.error.message);
-      setTotals((t.data as Total[]) ?? []);
-    } else {
-      setTotals([]);
-    }
-
-    const historyRows = (closed.data as Cycle[]) ?? [];
-    if (historyRows.length) {
-      const { data, error: historyError } = await supabase
-        .from('billing_cycle_member_totals')
-        .select('*')
-        .in('cycle_id', historyRows.map((c) => c.id))
-        .order('member_name');
-
-      if (historyError) return Alert.alert('Could not load tally history', historyError.message);
-
-      const grouped: Record<string, Total[]> = {};
-      for (const row of (data as Total[]) ?? []) {
-        (grouped[row.cycle_id] ??= []).push(row);
-      }
-      setHistoryTotals(grouped);
-    } else {
-      setHistoryTotals({});
-    }
-  }
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  useLive(
-    'orders,order_items,claims,extra_charges,delivery_exclusions,billing_cycles,billing_cycle_confirmations',
-    load
-  );
-
-  async function run(fn: () => PromiseLike<{ error: Error | null }>) {
-    setBusy(true);
-    const { error } = await fn();
-    if (error) Alert.alert('Could not update tally', error.message);
-    await load();
-    setBusy(false);
-  }
-
-  const trigger = () => run(() => supabase.rpc('trigger_billing_cycle'));
-  const confirm = () =>
-    cycle && run(() => supabase.rpc('confirm_billing_cycle', { p_cycle_id: cycle.id }));
-
-  const close = () => {
-    if (!cycle) return;
-
-    const skip = () => run(() => supabase.rpc('close_billing_cycle', { p_cycle_id: cycle.id }));
-
-    if (openOrders === 0) return skip();
-
-    Alert.alert(
-      'Unclosed orders',
-      `${openOrders} order${openOrders > 1 ? 's are' : ' is'} still open. Continue takes you to Orders. Skip closes this cycle and leaves open orders for the next tally.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Continue', onPress: () => router.navigate('/') },
-        { text: 'Skip', style: 'destructive', onPress: skip },
-      ]
-    );
+  const closeSheet = () => {
+    setSheet(null);
+    setSheetError(null);
   };
+  async function act(action: () => Promise<FriendlyError | null>, success?: string) {
+    setBusy(true);
+    const err = await action();
+    setBusy(false);
+    if (err) return sheet ? setSheetError(err.message) : toast.show(err.message);
+    closeSheet();
+    if (success) toast.show(success);
+  }
 
-  const teamTotal = totals.reduce((sum, t) => sum + t.grand_total, 0);
-  const participatingTotals = totals.filter((t) => t.grand_total > 0);
-  const confirmed = participatingTotals.filter((t) => t.confirmed_at).length;
-  const mine = totals.find((t) => t.member_id === me.id);
-  const isStarter = cycle?.triggered_by === me.id;
-  const everyoneConfirmed =
-    participatingTotals.length === 0 || confirmed === participatingTotals.length;
-  const canClose = !!cycle && isStarter && everyoneConfirmed;
+  if (!b.state) {
+    return (
+      <Screen>
+        <ThemedText type="screenTitle">My Lunches</ThemedText>
+        {b.error ? <ErrorState message={b.error.message} onRetry={b.reload} /> : <Skeleton.Card />}
+      </Screen>
+    );
+  }
 
-  const selectedTotals = selectedHistory ? historyTotals[selectedHistory.id] ?? [] : [];
-  const selectedTotal = selectedTotals.reduce((sum, t) => sum + t.grand_total, 0);
+  const { cycle, team, myLunches, cycleOf, history, myHistory, untallied, openOrders } = b.state;
+  const me = b.me;
+  const mine = myLunches.filter((l) => l.amount > 0);
+  const outside = mine.filter((l) => !cycleOf[l.order_id]);
+  const inCycle = cycle ? myLunches.filter((l) => cycleOf[l.order_id] === cycle.id) : [];
+  const myInCycle = inCycle.filter((l) => l.amount > 0);
+  const myRow = team.find((t) => t.member_id === me);
+  const myTotal = myRow?.grand_total ?? 0;
+  const confirmed = !!myRow?.confirmed_at;
+  const participants = team.filter((t) => t.grand_total > 0 && t.is_member);
+  const confirmedCount = participants.filter((t) => t.confirmed_at).length;
+  const starterHere = !!cycle?.triggered_by && team.some((t) => t.member_id === cycle.triggered_by && t.is_member);
+  const canSeeFinish = !!cycle && (cycle.triggered_by === me || !starterHere);
+  const allConfirmed = confirmedCount === participants.length;
+  const outsideTotal = outside.reduce((s, l) => s + l.amount, 0);
+  const current = cycle ? myInCycle : outside;
+  const nothing = !cycle && mine.length === 0 && history.length === 0;
+
+  const everyone = (title: string, rows: TeamRow[], back?: { kind: 'past'; cycle: Cycle }) =>
+    setSheet({ kind: 'everyone', title, back, rows: [...rows].sort((a, c) => (a.member_id === me ? -1 : c.member_id === me ? 1 : a.member_name.localeCompare(c.member_name))) });
 
   return (
-    <>
-      <ScrollView contentContainerStyle={styles.screen} contentInsetAdjustmentBehavior="automatic">
-        <View style={{ gap: 4 }}>
-          <ThemedText type="title">Totals</ThemedText>
-          <ThemedText type="small" themeColor="textSecondary">
-            Your team&apos;s current tally and previous cycles.
+    <Screen refreshing={false} onRefresh={b.reload}>
+      <ThemedText type="screenTitle">My Lunches</ThemedText>
+
+      {nothing ? (
+        <EmptyState emoji="🍽️" title="No lunches yet" text="Your lunch spending will appear here." />
+      ) : (
+        <Card tone="purple">
+          <ThemedText type="caption" themeColor="accentText">
+            {cycle ? `In review · ${periodLabel(inCycle, cycle.created_at)}` : 'Since your last review'}
           </ThemedText>
-        </View>
-
-        {!cycle ? (
-          <Card style={{ gap: 12 }}>
-            <Row>
-              <View style={{ gap: 3, flex: 1 }}>
-                <ThemedText type="label" themeColor="textSecondary">CURRENT CYCLE</ThemedText>
-                <ThemedText type="title">{money(0)}</ThemedText>
-              </View>
-              <Icon name="money" size={28} color="textSecondary" />
-            </Row>
-
-            {closedWaiting > 0 ? (
-              <Button
-                title={`Start tally · ${closedWaiting} order${closedWaiting > 1 ? 's' : ''}`}
-                icon="chart"
-                onPress={trigger}
-                disabled={busy}
-              />
-            ) : (
-              <ThemedText type="small" themeColor="textSecondary">
-                Close orders first, then start a tally.
-              </ThemedText>
-            )}
-          </Card>
-        ) : (
-          <>
-            <Card style={{ gap: 12 }}>
-              <Row>
-                <View style={{ gap: 3, flex: 1 }}>
-                  <ThemedText type="label" themeColor="textSecondary">CURRENT TALLY</ThemedText>
-                  <ThemedText type="title">{money(teamTotal)}</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">
-                    {confirmed} of {participatingTotals.length} participating members confirmed
-                  </ThemedText>
-                </View>
-                <Badge tone={everyoneConfirmed ? 'success' : 'warning'} icon={everyoneConfirmed ? 'check' : 'bell'}>
-                  {everyoneConfirmed ? 'Ready to close' : 'Awaiting confirmation'}
-                </Badge>
-              </Row>
-
-              {mine && (
-                <View style={{ backgroundColor: theme.backgroundSelected, borderRadius: 16, padding: 14 }}>
-                  <Row>
-                    <View style={{ gap: 2 }}>
-                      <ThemedText type="small" themeColor="textSecondary">YOUR TOTAL</ThemedText>
-                      <ThemedText type="smallBold" style={{ fontSize: 21 }}>{money(mine.grand_total)}</ThemedText>
-                    </View>
-                    {mine.confirmed_at && <Badge tone="success" icon="check">Confirmed</Badge>}
-                  </Row>
-                </View>
-              )}
-            </Card>
-
-            {openOrders > 0 && (
-              <View style={{ paddingHorizontal: 4 }}>
-                <ThemedText type="small" themeColor="textSecondary">
-                  {openOrders} open order{openOrders > 1 ? 's' : ''} will be carried into the next cycle.
-                </ThemedText>
-              </View>
-            )}
-
-            {totals.length > 0 && (
-              <Card style={{ gap: 0 }}>
-                <Row style={{ paddingBottom: 12 }}>
-                  <ThemedText type="label" themeColor="textSecondary">TEAM BREAKDOWN</ThemedText>
-                  <ThemedText type="small" themeColor="textSecondary">{totals.length} people</ThemedText>
-                </Row>
-
-                {totals.map((t, index) => (
-                  <View key={t.member_id}>
-                    {index > 0 && <View style={{ height: 1, backgroundColor: theme.border }} />}
-                    <View style={{ paddingVertical: 12 }}>
-                      <Row>
-                        <Row style={{ flex: 1, minWidth: 0 }}>
-                          <Avatar name={t.member_name} size={38} />
-                          <View style={{ flex: 1, minWidth: 0 }}>
-                            <ThemedText type="smallBold" numberOfLines={1}>
-                              {t.member_id === me.id ? `${t.member_name} (you)` : t.member_name}
-                            </ThemedText>
-                            <ThemedText type="small" themeColor="textSecondary" numberOfLines={1}>
-                              {money(t.items_total)} food · {money(t.delivery_total)} delivery
-                              {t.extras_total > 0 ? ` · ${money(t.extras_total)} extra` : ''}
-                            </ThemedText>
-                          </View>
-                        </Row>
-                        <ThemedText type="smallBold" style={{ fontSize: 17 }}>
-                          {money(t.grand_total)}
-                        </ThemedText>
-                      </Row>
-                    </View>
-                  </View>
-                ))}
-              </Card>
-            )}
-
-            <Card style={{ gap: 10 }}>
-              {mine && mine.grand_total > 0 && !mine.confirmed_at && (
-                <Button title="Confirm my total" icon="check" onPress={confirm} disabled={busy} />
-              )}
-              {isStarter && (
-                <Button
-                  title="Close cycle"
-                  icon="lock"
-                  variant="secondary"
-                  onPress={close}
-                  disabled={busy || !canClose}
-                />
-              )}
-              {isStarter && !everyoneConfirmed && (
-                <ThemedText type="small" themeColor="textSecondary">
-                  You can close the cycle after all participating members confirm.
-                </ThemedText>
-              )}
-            </Card>
-          </>
-        )}
-
-        <View style={{ gap: 8 }}>
-          <ThemedText type="label" themeColor="textSecondary" style={styles.section}>
-            HISTORY
+          <ThemedText type="amountLarge">{money(cycle ? myTotal : outsideTotal)}</ThemedText>
+          <ThemedText type="body">Your total</ThemedText>
+          <ThemedText type="small" themeColor="accentText">
+            {current.length} lunch{current.length === 1 ? '' : 'es'}
           </ThemedText>
-
-          {history.length === 0 ? (
-            <ThemedText type="small" themeColor="textSecondary" style={{ paddingHorizontal: 4 }}>
-              Completed tallies will appear here.
+          {cycle && myTotal > 0 && !confirmed && <Button title="Review lunches" onPress={() => setSheet({ kind: 'review' })} />}
+          {cycle && myTotal > 0 && confirmed && <StatusBadge status="confirmed" />}
+          {cycle && myTotal === 0 && (
+            <ThemedText type="small" themeColor="accentText">
+              You weren’t in this review.
             </ThemedText>
-          ) : (
-            <Card style={{ gap: 0 }}>
-              {history.map((item, index) => {
-                const rows = historyTotals[item.id] ?? [];
-                const total = rows.reduce((sum, t) => sum + t.grand_total, 0);
-                return (
-                  <View key={item.id}>
-                    {index > 0 && <View style={{ height: 1, backgroundColor: theme.border }} />}
-                    <Pressable
-                      onPress={() => setSelectedHistory(item)}
-                      style={{ paddingVertical: 14 }}
-                    >
-                      <Row>
-                        <View style={{ flex: 1, gap: 3 }}>
-                          <ThemedText type="smallBold">
-                            Tally · {item.closed_at ? niceDate(item.closed_at) : niceDate(item.created_at)}
-                          </ThemedText>
-                          <ThemedText type="small" themeColor="textSecondary">
-                            {rows.length} people · {money(total)}
-                          </ThemedText>
-                        </View>
-                        <Icon name="forward" size={16} color="textSecondary" />
-                      </Row>
-                    </Pressable>
-                  </View>
-                );
-              })}
-            </Card>
           )}
-        </View>
-      </ScrollView>
+        </Card>
+      )}
 
-      <Modal
-        visible={!!selectedHistory}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setSelectedHistory(null)}
-      >
-        <Pressable
-          onPress={() => setSelectedHistory(null)}
-          style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0,0,0,0.35)' }}
-        >
-          <Pressable
-            onPress={(event) => event.stopPropagation()}
-            style={{
-              backgroundColor: theme.backgroundElement,
-              borderTopLeftRadius: 28,
-              borderTopRightRadius: 28,
-              padding: 20,
-              paddingBottom: 32,
-              maxHeight: '80%',
-            }}
-          >
-            <View style={{ alignItems: 'center', marginBottom: 14 }}>
-              <View style={{ width: 42, height: 4, borderRadius: 4, backgroundColor: theme.border }} />
-            </View>
+      {cycle && outsideTotal > 0 && (
+        <Card>
+          <Row>
+            <ThemedText type="bodyStrong">Not in a review yet</ThemedText>
+            <ThemedText type="amount">{money(outsideTotal)}</ThemedText>
+          </Row>
+          <ThemedText type="small" themeColor="textSecondary">
+            {outside.length} lunch{outside.length === 1 ? '' : 'es'} · they go into the next review
+          </ThemedText>
+        </Card>
+      )}
 
-            {selectedHistory && (
-              <>
+      {current.length > 0 && (
+        <>
+          <SectionHeader title={cycle ? 'This review' : 'Your lunches'} />
+          <Card style={{ gap: 0, paddingVertical: Spacing.xs }}>
+            {byRestaurant(current).map((r, i) => (
+              <View key={r.title}>
+                {i > 0 && <Divider />}
+                <ListRow title={r.title} subtitle={`${r.count} lunch${r.count === 1 ? '' : 'es'}`} value={money(r.amount)} />
+              </View>
+            ))}
+          </Card>
+        </>
+      )}
+
+      {!cycle && untallied > 0 && (
+        <Card tone="mint">
+          <ThemedText type="bodyStrong">
+            {untallied} lunch{untallied === 1 ? '' : 'es'} ready for review
+          </ThemedText>
+          <ThemedText type="small" themeColor="textSecondary">
+            Everyone will be asked to confirm their total.
+          </ThemedText>
+          <Button title="Start a review" loading={busy} onPress={() => act(b.start, 'Review started')} />
+        </Card>
+      )}
+
+      {cycle && (
+        <Card>
+          <Row>
+            <ThemedText type="bodyStrong">
+              {confirmedCount} of {participants.length} confirmed
+            </ThemedText>
+            <StatusBadge status={allConfirmed ? 'ready' : 'waiting'} label={allConfirmed ? 'Ready' : 'Waiting'} />
+          </Row>
+          {openOrders > 0 && (
+            <ThemedText type="small" themeColor="textSecondary">
+              {openOrders} open lunch{openOrders === 1 ? '' : 'es'} will go into the next review.
+            </ThemedText>
+          )}
+          <Button title="See everyone’s totals" variant="secondary" onPress={() => everyone('Everyone’s totals', team)} />
+          {canSeeFinish && (
+            <Button
+              title="Finish review"
+              disabled={!allConfirmed}
+              loading={busy}
+              onPress={() => (openOrders > 0 ? setSheet({ kind: 'finish' }) : act(() => b.finish(cycle.id), 'Review finished'))}
+            />
+          )}
+        </Card>
+      )}
+
+      {history.length > 0 && (
+        <>
+          <SectionHeader title="Past reviews" />
+          <Card style={{ gap: 0, paddingVertical: Spacing.xs }}>
+            {history.map((c, i) => {
+              const lunches = myLunches.filter((l) => cycleOf[l.order_id] === c.id);
+              const total = myHistory[c.id] ?? 0;
+              return (
+                <View key={c.id}>
+                  {i > 0 && <Divider />}
+                  <ListRow
+                    title={periodLabel(lunches, c.created_at)}
+                    subtitle={total > 0 ? undefined : 'You weren’t in this one'}
+                    value={money(total)}
+                    chevron
+                    onPress={() => setSheet({ kind: 'past', cycle: c })}
+                  />
+                </View>
+              );
+            })}
+          </Card>
+          {b.hasMore && <Button title="Show older" variant="ghost" onPress={b.showOlder} />}
+        </>
+      )}
+
+      {/* Review my lunches → confirm */}
+      <BottomSheet
+        visible={sheet?.kind === 'review'}
+        onClose={closeSheet}
+        title="Review lunches"
+        dismissible={!busy}
+        error={sheetError}
+        footer={cycle && <Button title="Confirm" loading={busy} onPress={() => act(() => b.confirm(cycle.id), 'Total confirmed')} />}>
+        {myInCycle.map((l) => (
+          <ListRow
+            key={l.order_id}
+            title={l.title || 'Lunch'}
+            subtitle={`${dayLabel(l.ordered_on)} · by ${l.created_by === me ? 'you' : (l.creator ?? 'Former member')}`}
+            value={money(l.amount)}
+          />
+        ))}
+        <Divider />
+        <Row>
+          <ThemedText type="bodyStrong">Your total</ThemedText>
+          <ThemedText type="amount">{money(myTotal)}</ThemedText>
+        </Row>
+        <ThemedText type="sectionTitle">Everything looks right?</ThemedText>
+        <ThemedText type="small" themeColor="textSecondary">
+          Something’s wrong? Ask the person who created that lunch.
+        </ThemedText>
+      </BottomSheet>
+
+      {/* Finish with open orders */}
+      <BottomSheet
+        visible={sheet?.kind === 'finish'}
+        onClose={closeSheet}
+        title="Finish this review?"
+        dismissible={!busy}
+        error={sheetError}
+        footer={
+          cycle && (
+            <>
+              <Button title="Finish anyway" loading={busy} onPress={() => act(() => b.finish(cycle.id), 'Review finished')} />
+              <Button
+                title="Go to orders"
+                variant="ghost"
+                onPress={() => {
+                  closeSheet();
+                  router.navigate('/');
+                }}
+              />
+            </>
+          )
+        }>
+        <ThemedText type="body">
+          {openOrders} lunch{openOrders === 1 ? ' is' : 'es are'} still open. They’ll go into the next review.
+        </ThemedText>
+      </BottomSheet>
+
+      {/* Everyone's totals */}
+      <BottomSheet
+        visible={sheet?.kind === 'everyone'}
+        onClose={closeSheet}
+        onBack={sheet?.kind === 'everyone' && sheet.back ? () => setSheet(sheet.back!) : undefined}
+        title={sheet?.kind === 'everyone' ? sheet.title : ''}>
+        {sheet?.kind === 'everyone' &&
+          sheet.rows.map((t) => {
+            const [f, d, x] = splitRound([Number(t.items_total), Number(t.delivery_total), Number(t.extras_total)], t.grand_total);
+            return (
+              <View key={t.member_id} style={{ gap: Spacing.xs, opacity: t.is_member ? 1 : 0.7 }}>
                 <Row>
-                  <View style={{ gap: 3, flex: 1 }}>
-                    <ThemedText type="subtitle">Completed tally</ThemedText>
-                    <ThemedText type="small" themeColor="textSecondary">
-                      {selectedHistory.closed_at ? niceDate(selectedHistory.closed_at) : niceDate(selectedHistory.created_at)}
-                    </ThemedText>
-                  </View>
-                  <ThemedText type="smallBold" style={{ fontSize: 20 }}>{money(selectedTotal)}</ThemedText>
+                  <ThemedText type="bodyStrong" numberOfLines={1} style={{ flexShrink: 1 }}>
+                    {t.member_id === me ? 'You' : t.member_name}
+                  </ThemedText>
+                  <ThemedText type="amount">{money(t.grand_total)}</ThemedText>
                 </Row>
+                <ThemedText type="caption" themeColor="textSecondary">
+                  Food {money(f)} · Delivery {money(d)} · Extras {money(x)}
+                  {t.is_member ? '' : ' · Left the team'}
+                </ThemedText>
+                {t.grand_total > 0 && (
+                  <StatusBadge status={t.confirmed_at ? 'confirmed' : 'waiting'} label={t.confirmed_at ? 'Confirmed' : 'Waiting'} />
+                )}
+                <Divider />
+              </View>
+            );
+          })}
+      </BottomSheet>
 
-                <ScrollView style={{ marginTop: 16 }}>
-                  {selectedTotals.map((t) => (
-                    <View key={t.member_id} style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.border }}>
-                      <Row>
-                        <Row style={{ flex: 1, minWidth: 0 }}>
-                          <Avatar name={t.member_name} size={36} />
-                          <View style={{ flex: 1 }}>
-                            <ThemedText type="smallBold" numberOfLines={1}>{t.member_name}</ThemedText>
-                            <ThemedText type="small" themeColor="textSecondary">
-                              {money(t.items_total)} food · {money(t.delivery_total)} delivery
-                              {t.extras_total > 0 ? ` · ${money(t.extras_total)} extra` : ''}
-                            </ThemedText>
-                          </View>
-                        </Row>
-                        <ThemedText type="smallBold">{money(t.grand_total)}</ThemedText>
-                      </Row>
-                    </View>
-                  ))}
-                </ScrollView>
-
-                <Button title="Close" variant="secondary" onPress={() => setSelectedHistory(null)} style={{ marginTop: 14 }} />
+      {/* Past review detail */}
+      <BottomSheet visible={sheet?.kind === 'past'} onClose={closeSheet} title="Past review">
+        {sheet?.kind === 'past' &&
+          (() => {
+            const c = sheet.cycle;
+            const all = myLunches.filter((l) => cycleOf[l.order_id] === c.id);
+            const my = all.filter((l) => l.amount > 0);
+            return (
+              <>
+                <ThemedText type="caption" themeColor="textSecondary">
+                  {periodLabel(all, c.created_at)}
+                </ThemedText>
+                <Row>
+                  <ThemedText type="bodyStrong">Your total</ThemedText>
+                  <ThemedText type="amount">{money(myHistory[c.id] ?? 0)}</ThemedText>
+                </Row>
+                <ThemedText type="small" themeColor="textSecondary">
+                  You had {my.length} of the team’s {all.length} lunch{all.length === 1 ? '' : 'es'}
+                </ThemedText>
+                {byRestaurant(my).map((r) => (
+                  <ListRow key={r.title} title={r.title} subtitle={`${r.count} lunch${r.count === 1 ? '' : 'es'}`} value={money(r.amount)} />
+                ))}
+                <Button title="See everyone’s totals" variant="secondary" onPress={async () => everyone('Everyone’s totals', await b.teamFor(c.id), { kind: 'past', cycle: c })} />
               </>
-            )}
-          </Pressable>
-        </Pressable>
-      </Modal>
-    </>
+            );
+          })()}
+      </BottomSheet>
+    </Screen>
   );
 }

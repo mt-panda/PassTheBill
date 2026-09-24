@@ -19,6 +19,8 @@ import { Badge, Button, Icon, Row, type IconName } from '@/components/ui';
 import { useTheme } from '@/hooks/use-theme';
 import { useSession } from '@/lib/session';
 
+export { RouteErrorBoundary as ErrorBoundary } from '@/components/ui';
+
 function Hero({ icon, chips }: { icon: IconName; chips: string[] }) {
   const theme = useTheme();
   return (
@@ -55,19 +57,19 @@ function Hero({ icon, chips }: { icon: IconName; chips: string[] }) {
 
 const slides: { title: string; body: string; art: ReactNode }[] = [
   {
-    title: 'Add lunch once',
-    body: 'Whoever orders types in what was bought. That is the only typing anyone does.',
-    art: <Hero icon="receipt" chips={['Zinger × 3', 'Fries × 4', 'Delivery']} />,
+    title: 'Lunch without the hassle.',
+    body: 'One person adds the lunch. Everyone else just picks.',
+    art: <Hero icon="receipt" chips={['KFC', 'Today', '5 items']} />,
   },
   {
-    title: 'Tap what you ate',
-    body: 'Everyone taps + on their food. The app splits the delivery fee for you.',
-    art: <Hero icon="tap" chips={['You × 1', 'Sara × 1', 'Ahmed × 1']} />,
+    title: 'Order together.',
+    body: 'Tap + on what you’re having. Delivery is split for you.',
+    art: <Hero icon="tap" chips={['Zinger × 1', 'Fries × 1', 'Coke × 1']} />,
   },
   {
-    title: 'Close each cycle',
-    body: 'Whenever your team is ready, trigger a tally, confirm totals, and close that billing cycle.',
-    art: <Hero icon="money" chips={['Sara · Paid', 'Ahmed · Rs 5,750']} />,
+    title: 'Everyone pays their share.',
+    body: 'See your total, confirm it, done. No spreadsheets.',
+    art: <Hero icon="money" chips={['Sara · Rs 450', 'Ahmed · Rs 620', 'You · Rs 530']} />,
   },
 ];
 

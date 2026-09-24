@@ -1,10 +1,12 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient } from '@supabase/supabase-js';
 import * as Linking from 'expo-linking';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import { useCallback, useEffectEvent } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import { coalesce, createLoadGate } from '@/lib/live';
 
 // Required by expo-web-browser for OAuth completion on web.
 WebBrowser.maybeCompleteAuthSession();
@@ -22,6 +24,14 @@ export const supabase = createClient(
     },
   }
 );
+
+// Supabase's React Native guidance: only refresh the session while the app is in the foreground.
+if (Platform.OS !== 'web') {
+  AppState.addEventListener('change', (state) => {
+    if (state === 'active') supabase.auth.startAutoRefresh();
+    else supabase.auth.stopAutoRefresh();
+  });
+}
 
 function getAuthRedirectUrl() {
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
@@ -63,20 +73,36 @@ export function completeSignIn(code: string) {
   return exchanges.get(code)!;
 }
 
-export function useLive(tables: string, load: () => void, key = '') {
-  const onChange = useEffectEvent(load);
+/**
+ * Loads on focus, subscribes to realtime changes while focused, and reloads when the app returns
+ * to the foreground. Bursts of events are coalesced (250 ms); `isLatest()` lets the loader drop
+ * responses that a newer load has superseded.
+ */
+export function useLive(tables: string, load: (isLatest: () => boolean) => void | Promise<void>, key = '') {
+  const [gate] = useState(createLoadGate);
+  const loadRef = useRef(load);
+  useEffect(() => {
+    loadRef.current = load;
+  });
 
   useFocusEffect(
     useCallback(() => {
-      onChange();
-      const channel = supabase.channel(`live:${tables}:${Math.random()}`);
+      const run = () => void loadRef.current(gate.begin());
+      run();
+      const trigger = coalesce(() => run(), 250);
+      const channel = supabase.channel(`live:${tables}:${key}:${Math.random()}`);
       for (const table of tables.split(',')) {
-        channel.on('postgres_changes', { event: '*', schema: 'public', table }, () => onChange());
+        channel.on('postgres_changes', { event: '*', schema: 'public', table: table.trim() }, () => trigger());
       }
       channel.subscribe();
+      const appState = AppState.addEventListener('change', (state) => {
+        if (state === 'active') run();
+      });
       return () => {
+        trigger.cancel();
+        appState.remove();
         supabase.removeChannel(channel);
       };
-    }, [tables, key])
+    }, [tables, key, gate])
   );
 }
